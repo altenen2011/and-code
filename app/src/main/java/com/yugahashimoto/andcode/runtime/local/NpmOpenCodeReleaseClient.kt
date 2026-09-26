@@ -110,6 +110,35 @@ class NpmOpenCodeReleaseClient(
         return NpmUpdateCheck.Available(normalizedCurrent, platformRelease(latest, abi))
     }
 
+    /**
+     * Resolves the tarball size with a single-byte range probe (`Content-Range: bytes 0-0/<total>`)
+     * so the updater can gate on free space. Falls back to `Content-Length` when the server
+     * answers the range with `200` instead of `206`.
+     */
+    suspend fun tarballSizeBytes(tarballUrl: String): Long =
+        withContext(Dispatchers.IO) {
+            val request =
+                Request.Builder()
+                    .url(tarballUrl.toHttpUrl())
+                    .header("Accept", "application/octet-stream")
+                    .header("Range", "bytes=0-0")
+                    .header("User-Agent", USER_AGENT)
+                    .get()
+                    .build()
+            httpClient.newCall(request).execute().use { response ->
+                require(response.isSuccessful) {
+                    "npm tarball size probe failed with HTTP ${response.code}"
+                }
+                val total =
+                    response.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                        ?: response.header("Content-Length")?.toLongOrNull()
+                require(total != null && total > 0L) {
+                    "npm tarball size probe returned no usable size"
+                }
+                total
+            }
+        }
+
     private fun getDocument(path: String): NpmVersionDocument {
         val url =
             registry.newBuilder()

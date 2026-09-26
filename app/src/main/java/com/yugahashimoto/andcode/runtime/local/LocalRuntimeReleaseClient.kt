@@ -15,6 +15,12 @@ data class LocalRuntimeReleaseAsset(
     val url: String,
     val sha256: String,
     val sizeBytes: Long,
+    /**
+     * Set for npm-channel releases (OpenCode v2): the registry `dist.integrity` value
+     * (`sha512-<base64>`) that replaces the GitHub-asset SHA-256 digest. `sha256` stays blank
+     * there because the registry never publishes one.
+     */
+    val npmIntegrity: String? = null,
 ) {
     val requiredFreeBytes: Long
         get() = sizeBytes * SPACE_MULTIPLIER + UPDATE_SAFETY_BYTES
@@ -174,6 +180,7 @@ private fun parseRuntimeVersion(version: String): List<Int> {
     val normalized =
         version.trim()
             .removePrefix("v")
+            .replace(OPENCODE_VERSION_PREFIX, "")
             .substringBefore('-')
             .substringBefore('+')
     require(VERSION.matches(normalized)) { "Invalid OpenCode version: $version" }
@@ -181,3 +188,6 @@ private fun parseRuntimeVersion(version: String): List<Int> {
 }
 
 private val VERSION = Regex("^[0-9]+(?:\\.[0-9]+){1,3}$")
+
+/** V2 binaries answer `--version` with `opencode v2.0.18`; the v1 line prints the bare number. */
+private val OPENCODE_VERSION_PREFIX = Regex("^opencode\\s+v?")

@@ -119,8 +119,11 @@ class LocalRuntimeUpdater(
         onProgress: (Float?, String) -> Unit,
     ): PreparedRuntimeUpdate {
         accessCoordinator.write { recoverInterruptedActivationLocked() }
-        require(release.asset.name == expectedAssetName(abi)) {
-            "Unexpected OpenCode update asset for ABI $abi: ${release.asset.name}"
+        val isNpmRelease = release.asset.npmIntegrity != null
+        if (!isNpmRelease) {
+            require(release.asset.name == expectedAssetName(abi)) {
+                "Unexpected OpenCode update asset for ABI $abi: ${release.asset.name}"
+            }
         }
         val snapshot =
             accessCoordinator.read {
@@ -173,6 +176,9 @@ class LocalRuntimeUpdater(
                     version = normalizedVersion,
                     installedAt = nowMillis(),
                     abi = abi,
+                    // Upgrades from a pre-password runtime (v1 line) land here with a blank
+                    // secret; mint one so the v2 server can require auth after activation.
+                    serverPassword = currentMetadata.serverPassword.ifBlank { generateServerPassword() },
                 )
             onProgress(1f, messages.updateCandidateReady())
             return PreparedRuntimeUpdate(
