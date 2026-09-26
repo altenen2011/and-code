@@ -21,11 +21,11 @@ class VerifiedRuntimeDownloader(
         expectedSha256: String = "",
         expectedSizeBytes: Long? = null,
         headers: Map<String, String> = emptyMap(),
-        onProgress: (Float?) -> Unit = {},
         verify: (File) -> Unit = { file ->
             require(expectedSha256.isNotBlank()) { "Missing SHA-256 expectation" }
             RuntimeArchive.verifySha256(file, expectedSha256)
         },
+        onProgress: (Float?) -> Unit = {},
     ) = operationMutex.withLock {
         withContext(Dispatchers.IO) {
             downloadLocked(
@@ -34,8 +34,8 @@ class VerifiedRuntimeDownloader(
                 expectedSha256 = expectedSha256,
                 expectedSizeBytes = expectedSizeBytes,
                 headers = headers,
-                onProgress = onProgress,
                 verify = verify,
+                onProgress = onProgress,
             )
         }
     }
@@ -46,8 +46,8 @@ class VerifiedRuntimeDownloader(
         expectedSha256: String,
         expectedSizeBytes: Long?,
         headers: Map<String, String>,
-        onProgress: (Float?) -> Unit,
         verify: (File) -> Unit,
+        onProgress: (Float?) -> Unit,
     ) {
         val parsedUrl = url.toHttpUrl()
         require(parsedUrl.isHttps || parsedUrl.host in LOOPBACK_HOSTS) {
