@@ -17,8 +17,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -58,6 +60,19 @@ class OpenCodeV2ApiClient(
     suspend fun locationInfo(location: String? = null): V2LocationInfo = getData("api/location", query("location[directory]" to location))
 
     suspend fun session(sessionId: String): V2Session = getDataOrDirect("api/session/${encodePath(sessionId)}")
+
+    /**
+     * Ids of sessions with live runs. `GET /api/session/active` answers `{data: ...}` whose shape
+     * varies (map or list), so ids are collected leniently: `ses_*` keys plus any `sessionID`
+     * string values. Used to restore the running state when a chat is reopened mid-turn.
+     */
+    suspend fun activeSessionIds(): Set<String> =
+        withContext(Dispatchers.IO) {
+            execute(requestBuilder("api/session/active").get().build()) { body ->
+                val data = json.parseToJsonElement(body).jsonObject["data"] ?: return@execute emptySet()
+                collectSessionIds(data)
+            }
+        }
 
     suspend fun createSession(
         title: String? = null,
@@ -545,6 +560,27 @@ class OpenCodeV2ApiClient(
                 element
             }
         return json.decodeFromJsonElement(serializer(), payload)
+    }
+
+    private fun collectSessionIds(element: JsonElement): Set<String> {
+        val ids = mutableSetOf<String>()
+
+        fun visit(node: JsonElement) {
+            when (node) {
+                is JsonObject ->
+                    node.entries.forEach { (key, value) ->
+                        if (key.startsWith("ses_")) ids += key
+                        if (key == "sessionID" && value is JsonPrimitive && value.isString) {
+                            ids += value.content
+                        }
+                        visit(value)
+                    }
+                is JsonArray -> node.forEach(::visit)
+                else -> Unit
+            }
+        }
+        visit(element)
+        return ids
     }
 
     private fun <T> execute(

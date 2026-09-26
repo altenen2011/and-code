@@ -55,6 +55,22 @@ class OpenCodeV2TranslationTest {
     }
 
     @Test
+    fun `keeps message timestamps for ordering and footers`() {
+        val message =
+            v2MessageFromJson(
+                buildJsonObject {
+                    put("id", "msg_9")
+                    put("sessionID", "ses_1")
+                    put("type", "user")
+                    put("text", "hi")
+                    put("time", buildJsonObject { put("created", 1790440217782.0) })
+                },
+            ).toMessage()
+
+        assertEquals(1790440217782L, message.info.time.created)
+    }
+
+    @Test
     fun `joins providers and models into catalog`() {
         val catalog =
             toProviderCatalog(
@@ -69,6 +85,36 @@ class OpenCodeV2TranslationTest {
         assertEquals(1, catalog.all.size)
         assertEquals(1, catalog.all[0].models.size)
         assertEquals("claude", catalog.all[0].models["anthropic/claude"]?.name)
+    }
+
+    @Test
+    fun `integrations keep unconfigured providers visible and mark connections`() {
+        val catalog =
+            toProviderCatalog(
+                providers = emptyList(),
+                models =
+                    listOf(
+                        V2Model(
+                            id = "space-bunny-free",
+                            providerId = "opencode",
+                            modelId = "space-bunny-free",
+                            variants = listOf(V2ModelVariant(id = "high")),
+                        ),
+                    ),
+                integrations =
+                    listOf(
+                        V2Integration(id = "opencode", name = "OpenCode"),
+                        V2Integration(
+                            id = "anthropic",
+                            name = "Anthropic",
+                            connections = listOf(V2Connection(type = "credential", id = "cred_1")),
+                        ),
+                    ),
+            )
+
+        assertEquals(setOf("opencode", "anthropic"), catalog.all.map { it.id }.toSet())
+        assertEquals(listOf("anthropic"), catalog.connected)
+        assertTrue("high" in catalog.all.first { it.id == "opencode" }.models["space-bunny-free"]!!.variants)
     }
 
     @Test

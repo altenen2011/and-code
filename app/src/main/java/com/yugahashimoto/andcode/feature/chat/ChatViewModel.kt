@@ -1009,6 +1009,18 @@ class ChatViewModel(
                     }
                 }
         }
+        // A turn can still be running when its chat is reopened (the user left mid-turn). The
+        // event stream will say so on its next event, but until then the composer would sit on
+        // send while the server works — restore the running state proactively.
+        viewModelScope.launch {
+            val active =
+                runCatching { currentBackend.activeSessionIds() }.getOrDefault(emptySet())
+            if (sessionId in active) {
+                _uiState.update { state ->
+                    if (state.sessionId == sessionId) state.copy(isRunning = true) else state
+                }
+            }
+        }
     }
 
     /** Opens a subagent session started by the open chat, remembering the session to return to. */

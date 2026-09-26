@@ -197,6 +197,41 @@ class RemoteOpenCodeV2BackendTest {
         }
 
     @Test
+    fun `messages sort chronologically regardless of server order`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":[{"id":"msg_2","sessionID":"ses_1","type":"assistant","text":"yo","time":{"created":2000}},{"id":"msg_1","sessionID":"ses_1","type":"user","text":"hi","time":{"created":1000}}],"cursor":{}}""",
+                ),
+            )
+
+            val messages = backend.listMessages("ses_1")
+
+            assertEquals(listOf("msg_1", "msg_2"), messages.map { it.info.id })
+        }
+
+    @Test
+    fun `providers merge integrations with connections`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{"location":{},"data":[]}"""))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"m1","providerID":"opencode","modelID":"m1"}]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"opencode","name":"OpenCode","methods":[],"connections":[{"type":"credential","id":"c1"}]}]}""",
+                ),
+            )
+
+            val catalog = backend.listProviders()
+
+            assertEquals(listOf("opencode"), catalog.all.map { it.id })
+            assertEquals(listOf("opencode"), catalog.connected)
+        }
+
+    @Test
     fun `projects files and vcs map from location routes`() =
         runBlocking {
             server.enqueue(MockResponse().setBody("""[{"id":"prj_1","canonical":"repo","name":"Repo"}]"""))

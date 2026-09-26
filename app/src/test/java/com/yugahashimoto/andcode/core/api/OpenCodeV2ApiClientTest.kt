@@ -148,6 +148,16 @@ class OpenCodeV2ApiClientTest {
             assertEquals("/api/session/ses_abc/background", server.takeRequest().path)
         }
 
+    @Test
+    fun `collects active session ids from object and list shapes`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{"data":{"ses_1":{"status":"busy"}}}"""))
+            server.enqueue(MockResponse().setBody("""{"data":[{"sessionID":"ses_2"}]}"""))
+
+            assertEquals(setOf("ses_1"), client.activeSessionIds())
+            assertEquals(setOf("ses_2"), client.activeSessionIds())
+        }
+
     private fun MockWebServer.takePath(): String = takeRequest().path?.substringBefore("?").orEmpty()
 }
 

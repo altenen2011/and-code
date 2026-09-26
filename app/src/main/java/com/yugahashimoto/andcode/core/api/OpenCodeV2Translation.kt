@@ -56,6 +56,7 @@ fun V2Message.toMessage(): OpenCodeMessage {
             id = messageId,
             sessionId = sessionId.orEmpty(),
             role = role,
+            time = OpenCodeTime(created = createdMs),
         )
     val parts =
         // Parts need stable ids: the chat drops id-less parts on reload, which hid entire
@@ -92,15 +93,24 @@ fun V2Agent.toAgent(): OpenCodeAgent =
         mode = mode,
     )
 
-/** Joins the v2 provider and model listings into the catalog pickers expect. */
+/**
+ * Joins the v2 provider and model listings into the catalog pickers expect. Integrations fill
+ * two gaps: providers the server knows but has no connection for never appear in `/api/provider`
+ * (so built-ins would vanish until sign-in), and only integrations report live connections.
+ */
 fun toProviderCatalog(
     providers: List<V2Provider>,
     models: List<V2Model>,
+    integrations: List<V2Integration> = emptyList(),
 ): ProviderCatalog {
     val modelsByProvider = models.groupBy { it.providerId ?: "unknown" }
+    val byId = providers.associateBy { it.id }.toMutableMap()
+    integrations.forEach { integration ->
+        byId.getOrPut(integration.id) { V2Provider(id = integration.id, name = integration.name) }
+    }
     return ProviderCatalog(
         all =
-            providers.map { provider ->
+            byId.values.map { provider ->
                 OpenCodeProvider(
                     id = provider.id,
                     name = provider.name,
@@ -111,14 +121,13 @@ fun toProviderCatalog(
                                     id = model.id,
                                     providerId = model.providerId,
                                     name = model.displayName,
+                                    variants = model.variants.associate { it.id to JsonObject(emptyMap()) },
                                 )
                         },
                 )
             },
-        // V2 exposes connection state through the integration/credential routes (Phase 2b);
-        // pickers treat every listed provider as available until then.
         default = emptyMap(),
-        connected = emptyList(),
+        connected = integrations.filter { it.connections.any { connection -> connection.isCredential } }.map { it.id },
     )
 }
 

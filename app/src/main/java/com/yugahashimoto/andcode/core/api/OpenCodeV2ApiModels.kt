@@ -108,11 +108,17 @@ data class V2Agent(
 )
 
 @Serializable
+data class V2ModelVariant(
+    val id: String = "",
+)
+
+@Serializable
 data class V2Model(
     val id: String = "",
     @SerialName("providerID") val providerId: String? = null,
     @SerialName("modelID") val modelId: String? = null,
     val name: String? = null,
+    val variants: List<V2ModelVariant> = emptyList(),
 ) {
     val displayName: String
         get() = name?.takeIf { it.isNotBlank() } ?: modelId ?: id
@@ -142,12 +148,15 @@ data class V2Message(
     val sessionId: String?,
     val kind: String,
     val text: String,
+    /** Epoch milliseconds from the message `time.created`, or 0 when absent. */
+    val createdMs: Long,
     val raw: JsonObject,
 )
 
 internal fun v2MessageFromJson(element: JsonObject): V2Message {
     val info = element["info"] as? JsonObject
     val source = info ?: element
+    val time = source["time"] as? JsonObject ?: element["time"] as? JsonObject
     return V2Message(
         id =
             (source["id"] as? JsonPrimitive)?.content
@@ -160,6 +169,8 @@ internal fun v2MessageFromJson(element: JsonObject): V2Message {
                 ?: (element["type"] as? JsonPrimitive)?.content
                 ?: "unknown",
         text = collectV2Text(source),
+        createdMs =
+            (time?.get("created") as? JsonPrimitive)?.content?.toDoubleOrNull()?.toLong() ?: 0L,
         raw = element,
     )
 }

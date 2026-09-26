@@ -80,14 +80,21 @@ class RemoteOpenCodeV2Backend(
 
     override suspend fun session(sessionId: String): OpenCodeSession = client.session(sessionId).toSession()
 
+    override suspend fun activeSessionIds(): Set<String> = client.activeSessionIds()
+
     override suspend fun createSession(
         title: String?,
         directory: String?,
     ): OpenCodeSession = client.createSession(title = title).toSession()
 
-    override suspend fun listMessages(sessionId: String): List<OpenCodeMessage> = client.messages(sessionId).map { it.toMessage() }
+    override suspend fun listMessages(sessionId: String): List<OpenCodeMessage> =
+        // The v2 listing carries no order guarantee; the transcript must read chronologically or
+        // user bubbles land after the replies that followed them.
+        client.messages(sessionId).map { it.toMessage() }.sortedWith(
+            compareBy({ it.info.time.created }, { it.info.id }),
+        )
 
-    override suspend fun listProviders(): ProviderCatalog = toProviderCatalog(client.providers(), client.models())
+    override suspend fun listProviders(): ProviderCatalog = toProviderCatalog(client.providers(), client.models(), client.integrations())
 
     override suspend fun listAgents(): List<OpenCodeAgent> = client.agents().map { it.toAgent() }
 

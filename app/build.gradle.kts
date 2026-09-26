@@ -66,6 +66,25 @@ val prepareOpenCodeRuntimeNativeLibs =
         )
     }
 
+val generatedPortableRuntime = rootProject.layout.buildDirectory.dir("generated/portable-runtime")
+
+val preparePortableRuntime =
+    tasks.register<Exec>("preparePortableRuntime") {
+        inputs.file(repoRoot.resolve("scripts/prepare_portable_runtime.py"))
+        inputs.file(repoRoot.resolve("app/src/main/assets/local-runtime-manifest.json"))
+        outputs.dir(generatedPortableRuntime)
+        commandLine(
+            "python3",
+            repoRoot.resolve("scripts/prepare_portable_runtime.py").absolutePath,
+            "--manifest",
+            repoRoot.resolve("app/src/main/assets/local-runtime-manifest.json").absolutePath,
+            "--output-dir",
+            generatedPortableRuntime.get().asFile.absolutePath,
+            "--abis",
+            "arm64-v8a,x86_64",
+        )
+    }
+
 val releaseStoreFile =
     (
         System.getenv("AND_CODE_STORE_FILE")
@@ -221,6 +240,7 @@ android {
     }
     sourceSets {
         getByName("main").jniLibs.srcDir(generatedRuntimeJni)
+        getByName("main").assets.srcDir(generatedPortableRuntime)
     }
     packaging {
         resources {
@@ -237,6 +257,7 @@ android {
 
 tasks.named("preBuild").configure {
     dependsOn(prepareOpenCodeRuntimeNativeLibs)
+    dependsOn(preparePortableRuntime)
 }
 
 dependencies {
