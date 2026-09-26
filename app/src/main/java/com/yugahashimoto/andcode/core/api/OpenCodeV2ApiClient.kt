@@ -254,6 +254,55 @@ class OpenCodeV2ApiClient(
 
     suspend fun integrations(): List<V2Integration> = getDataList("api/integration")
 
+    suspend fun integration(id: String): V2IntegrationDetail = getDataOrDirect("api/integration/${encodePath(id)}")
+
+    suspend fun connectWithKey(
+        id: String,
+        key: String,
+        label: String? = null,
+    ): Boolean {
+        val body =
+            buildJsonObject {
+                put("key", key)
+                label?.takeIf { it.isNotBlank() }?.let { put("label", it) }
+            }
+        return postUnit("api/integration/${encodePath(id)}/connect/key", body)
+    }
+
+    suspend fun beginOAuth(
+        id: String,
+        methodId: String,
+        answer: JsonObject? = null,
+    ): V2OAuthAttempt {
+        val body =
+            buildJsonObject {
+                put("methodID", methodId)
+                answer?.let { put("answer", it) }
+            }
+        return postDataOrDirect("api/integration/${encodePath(id)}/connect/oauth", body)
+    }
+
+    suspend fun completeOAuth(
+        id: String,
+        attemptId: String,
+        code: String?,
+    ): Boolean {
+        val body =
+            buildJsonObject {
+                code?.takeIf { it.isNotBlank() }?.let { put("code", it) }
+            }
+        return postUnit("api/integration/${encodePath(id)}/connect/oauth/${encodePath(attemptId)}/complete", body)
+    }
+
+    suspend fun cancelOAuth(
+        id: String,
+        attemptId: String,
+    ): Boolean = deleteUnit("api/integration/${encodePath(id)}/connect/oauth/${encodePath(attemptId)}")
+
+    suspend fun removeCredential(id: String): Boolean = deleteUnit("api/credential/${encodePath(id)}")
+
+    suspend fun activateCredential(id: String): Boolean = postUnit("api/credential/${encodePath(id)}/activate", JsonObject(emptyMap()))
+
     suspend fun forms(sessionId: String): List<V2Form> = getDataList("api/session/${encodePath(sessionId)}/form")
 
     suspend fun pendingForms(): List<V2Form> = getDataList("api/form")

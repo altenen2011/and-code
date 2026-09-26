@@ -1,5 +1,6 @@
 package com.yugahashimoto.andcode.core.api
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -248,3 +249,45 @@ fun V2Form.toQuestion(): QuestionRequest =
 
 /** V1 `git` mode has no v2 counterpart; `working` is the closest review base. */
 fun v2VcsMode(mode: String): String = if (mode == "git") "working" else mode
+
+/**
+ * Maps v2 integration methods onto the provider-auth dialog shapes. `key` becomes the API-key
+ * path, `oauth` the browser path (with its form fields as prompts); `command`/`env` methods need
+ * no dialog and are skipped.
+ */
+fun integrationMethodsToAuthMethods(methods: List<JsonObject>): List<ProviderAuthMethod> =
+    methods.mapNotNull { raw ->
+        when ((raw["type"] as? JsonPrimitive)?.content) {
+            "key" ->
+                ProviderAuthMethod(
+                    type = "api",
+                    label =
+                        ((raw["label"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() })
+                            ?: "API key",
+                    prompts = emptyList(),
+                )
+            "oauth" ->
+                ProviderAuthMethod(
+                    type = "oauth",
+                    label =
+                        ((raw["label"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() })
+                            ?: "OAuth",
+                    prompts = oAuthFormToPrompts(raw["form"]),
+                )
+            else -> null
+        }
+    }
+
+private fun oAuthFormToPrompts(form: JsonElement?): List<ProviderAuthPrompt> {
+    val fields = form as? JsonArray ?: return emptyList()
+    return fields.mapNotNull { field ->
+        val obj = field as? JsonObject ?: return@mapNotNull null
+        val key = (obj["key"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        ProviderAuthPrompt(
+            type = "text",
+            key = key,
+            message = (obj["title"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: key,
+            placeholder = (obj["placeholder"] as? JsonPrimitive)?.content,
+        )
+    }
+}

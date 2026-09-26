@@ -17,10 +17,13 @@ import com.yugahashimoto.andcode.core.api.OpenCodeSkill
 import com.yugahashimoto.andcode.core.api.OpenCodeV2ApiClient
 import com.yugahashimoto.andcode.core.api.OpenCodeVcsInfo
 import com.yugahashimoto.andcode.core.api.PromptRequest
+import com.yugahashimoto.andcode.core.api.ProviderAuthAuthorization
+import com.yugahashimoto.andcode.core.api.ProviderAuthMethod
 import com.yugahashimoto.andcode.core.api.ProviderCatalog
 import com.yugahashimoto.andcode.core.api.QuestionRequest
 import com.yugahashimoto.andcode.core.api.V2FileAttachment
 import com.yugahashimoto.andcode.core.api.V2ModelRef
+import com.yugahashimoto.andcode.core.api.integrationMethodsToAuthMethods
 import com.yugahashimoto.andcode.core.api.toAgent
 import com.yugahashimoto.andcode.core.api.toCommand
 import com.yugahashimoto.andcode.core.api.toConfiguredProvider
@@ -67,6 +70,9 @@ class RemoteOpenCodeV2Backend(
     override val displayName: String = profile.name
     override val kind: BackendKind = BackendKind.REMOTE
 
+    /** OAuth attempt ids per provider, bridging begin (dialog step 1) and complete (step 2). */
+    private val oauthAttempts = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     override suspend fun health(): OpenCodeHealth = client.info().toHealth()
 
     override suspend fun listSessions(directory: String?): List<OpenCodeSession> =
@@ -84,6 +90,70 @@ class RemoteOpenCodeV2Backend(
     override suspend fun listProviders(): ProviderCatalog = toProviderCatalog(client.providers(), client.models())
 
     override suspend fun listAgents(): List<OpenCodeAgent> = client.agents().map { it.toAgent() }
+
+    override suspend fun providerAuthMethods(): Map<String, List<ProviderAuthMethod>> =
+        client.integrations().associate { integration ->
+            integration.id to integrationMethodsToAuthMethods(integration.methods)
+        }
+
+    override suspend fun authorizeProvider(
+        providerId: String,
+        methodIndex: Int,
+        inputs: Map<String, String>,
+    ): ProviderAuthAuthorization {
+        val detail = client.integration(providerId)
+        val raw = detail.methods.getOrNull(methodIndex) ?: error("sign-in method is not available")
+        require((raw["type"] as? JsonPrimitive)?.content == "oauth") {
+            "sign-in method is not available"
+        }
+        val methodId =
+            (raw["id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                ?: error("sign-in method is not available")
+        val answer =
+            inputs.entries
+                .filter { it.value.isNotBlank() }
+                .takeIf { it.isNotEmpty() }
+                ?.let { entries ->
+                    buildJsonObject { entries.forEach { (key, value) -> put(key, value) } }
+                }
+        val attempt = client.beginOAuth(providerId, methodId, answer)
+        oauthAttempts[providerId] = attempt.attemptId
+        return ProviderAuthAuthorization(
+            url = attempt.url,
+            method = if (attempt.mode == "auto") "auto" else "code",
+            instructions = attempt.instructions.orEmpty(),
+        )
+    }
+
+    override suspend fun setProviderApiKey(
+        providerId: String,
+        apiKey: String,
+        metadata: Map<String, String>,
+    ): Boolean = client.connectWithKey(providerId, apiKey, metadata["label"])
+
+    override suspend fun removeProviderAuth(providerId: String): Boolean {
+        val credentialIds =
+            client.integration(providerId).connections
+                .filter { it.isCredential }
+                .mapNotNull { it.id }
+        credentialIds.forEach { client.removeCredential(it) }
+        return true
+    }
+
+    override suspend fun completeProviderOAuth(
+        providerId: String,
+        methodIndex: Int,
+        code: String?,
+    ): Boolean {
+        if (code != null) {
+            val attemptId =
+                oauthAttempts[providerId]
+                    ?: error("sign-in expired; start again")
+            return client.completeOAuth(providerId, attemptId, code)
+        }
+        // Auto mode finishes in the browser; poll for the credential appearing.
+        return client.integration(providerId).connections.any { it.isCredential }
+    }
 
     override suspend fun listProjects(directory: String?): List<OpenCodeProject> = client.projects().map { it.toProject() }
 

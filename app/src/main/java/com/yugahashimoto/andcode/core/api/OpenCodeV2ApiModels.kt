@@ -77,6 +77,14 @@ data class V2Provider(
 )
 
 @Serializable
+data class V2Integration(
+    val id: String = "",
+    val name: String = id,
+    val methods: List<JsonObject> = emptyList(),
+    val connections: List<V2Connection> = emptyList(),
+)
+
+@Serializable
 data class V2Agent(
     val id: String = "",
     val name: String = id,
@@ -289,16 +297,40 @@ data class V2Skill(
 )
 
 @Serializable
-data class V2Integration(
-    val id: String = "",
-    val name: String = id,
-    val connections: List<JsonElement> = emptyList(),
-)
-
-@Serializable
 data class V2Form(
     val id: String = "",
     @SerialName("sessionID") val sessionId: String = "",
     val title: String = "",
     val fields: List<JsonObject> = emptyList(),
+)
+
+/** Phase 2c models: provider authentication through the integration/credential API. */
+
+@Serializable
+data class V2Connection(
+    val type: String = "",
+    val id: String? = null,
+    val label: String? = null,
+    val method: String? = null,
+    val name: String? = null,
+) {
+    val isCredential: Boolean
+        get() = type == "credential"
+}
+
+@Serializable
+data class V2IntegrationDetail(
+    val id: String = "",
+    val name: String = id,
+    val methods: List<JsonObject> = emptyList(),
+    val connections: List<V2Connection> = emptyList(),
+)
+
+@Serializable
+data class V2OAuthAttempt(
+    @SerialName("attemptID") val attemptId: String = "",
+    val url: String = "",
+    val instructions: String? = null,
+    /** `auto` completes in the browser; anything else pastes a code back into the app. */
+    val mode: String? = null,
 )

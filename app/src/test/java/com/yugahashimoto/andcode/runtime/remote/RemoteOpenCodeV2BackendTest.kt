@@ -264,5 +264,72 @@ class RemoteOpenCodeV2BackendTest {
             assertEquals(1, server.requestCount)
         }
 
+    @Test
+    fun `auth methods map key and oauth integrations`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"acme","name":"Acme","methods":[{"type":"key"},{"type":"oauth","id":"m1","label":"Sign in","form":[{"key":"team","title":"Team","type":"string"}]},{"type":"env"}]}]}""",
+                ),
+            )
+
+            val methods = backend.providerAuthMethods()["acme"].orEmpty()
+
+            assertEquals(listOf("api", "oauth"), methods.map { it.type })
+            assertEquals("team", methods[1].prompts.single().key)
+            assertEquals("/api/integration", server.takePath())
+        }
+
+    @Test
+    fun `oauth begin stores the attempt for completion`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"id":"acme","name":"Acme","methods":[{"type":"oauth","id":"m1","label":"Sign in"}],"connections":[]}}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":{"attemptID":"att_1","url":"https://auth.example/start","mode":"code"}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            val authorization = backend.authorizeProvider("acme", 0, mapOf("team" to "t1"))
+            val completed = backend.completeProviderOAuth("acme", 0, "code-9")
+
+            assertEquals("https://auth.example/start", authorization.url)
+            assertEquals("code", authorization.method)
+            assertTrue(completed)
+            server.takePath()
+            val begin = server.takeRequest()
+            assertEquals("/api/integration/acme/connect/oauth", begin.path)
+            assertTrue(begin.body.readUtf8().contains("m1"))
+            val complete = server.takeRequest()
+            assertEquals("/api/integration/acme/connect/oauth/att_1/complete", complete.path)
+            assertTrue(complete.body.readUtf8().contains("code-9"))
+        }
+
+    @Test
+    fun `api key connect and credential removal use integration routes`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{}"""))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"id":"acme","methods":[],"connections":[{"type":"credential","id":"cred_1"},{"type":"env","name":"X"}]}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            assertTrue(backend.setProviderApiKey("acme", "sk-1", emptyMap()))
+            val connect = server.takeRequest()
+            assertEquals("/api/integration/acme/connect/key", connect.path)
+            assertTrue(connect.body.readUtf8().contains("sk-1"))
+
+            assertTrue(backend.removeProviderAuth("acme"))
+            server.takePath()
+            assertEquals("/api/credential/cred_1", server.takeRequest().path)
+        }
+
     private fun MockWebServer.takePath(): String = takeRequest().path?.substringBefore("?").orEmpty()
 }
