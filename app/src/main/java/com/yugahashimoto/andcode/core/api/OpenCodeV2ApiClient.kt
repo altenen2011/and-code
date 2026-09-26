@@ -30,7 +30,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * OpenCode v2 (2.x) HTTP client. Every route lives under `/api/*` and most responses wrap their
+ * OpenCode v2 (2.x) HTTP client. Every route lives under `/api/` and most responses wrap their
  * payload in `{data: ...}` (listings add a `location` sibling).
  *
  * This client is additive: the v1 [OpenCodeApiClient] stays untouched until the backends are

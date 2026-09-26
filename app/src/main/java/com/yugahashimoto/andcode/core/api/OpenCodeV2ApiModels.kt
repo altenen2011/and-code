@@ -11,7 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * Minimal OpenCode v2 (2.x) server API models.
  *
  * V2 is an intentional server-API break (see `docs/OPENCODE_V2.md`): every route lives under
- * `/api/*`, list/create calls wrap payloads in `{data: ...}` (lists add `{location, data}`), and
+ * `/api/`, list/create calls wrap payloads in `{data: ...}` (lists add `{location, data}`), and
  * session IDs use the `ses_*`, message IDs the `msg_*`, permission IDs the `per_*` shape.
  *
  * Everything here decodes leniently (unknown keys ignored, generous defaults) because the app
