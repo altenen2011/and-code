@@ -245,7 +245,12 @@ def extract_member(tarball: bytes, member_name: str) -> bytes:
         return tar.extractfile(member).read()
 
 
-def build_bundle(manifest: dict, android_abi: str, output_dir: Path) -> Path:
+def build_bundle(
+    manifest: dict,
+    android_abi: str,
+    output_dir: Path,
+    staging_base: Path,
+) -> Path:
     alpine_arch = ANDROID_TO_ALPINE_ARCH[android_abi]
     alpine_version = manifest["alpineVersion"]
     alpine_branch = ".".join(alpine_version.split(".")[:2])
@@ -262,7 +267,7 @@ def build_bundle(manifest: dict, android_abi: str, output_dir: Path) -> Path:
 
     # 2. Extract it first: whatever it already ships (musl, busybox, keys) is authoritative
     # and never re-downloaded, which also sidesteps index/file skew on those packages.
-    staging = output_dir / f"portable-staging-{android_abi}"
+    staging = staging_base / f"portable-staging-{android_abi}"
     if staging.exists():
         import shutil
 
@@ -403,11 +408,18 @@ def main() -> int:
     manifest = json.loads(Path(args.manifest).read_text())
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    for abi in [a.strip() for a in args.abis.split(",") if a.strip()]:
-        if abi not in manifest["architectures"]:
-            raise SystemExit(f"ABI {abi} not in manifest")
-        build_bundle(manifest, abi, output_dir)
-    return 0
+    import shutil
+    import tempfile
+
+    staging_base = Path(tempfile.mkdtemp(prefix="andcode-portable-"))
+    try:
+        for abi in [a.strip() for a in args.abis.split(",") if a.strip()]:
+            if abi not in manifest["architectures"]:
+                raise SystemExit(f"ABI {abi} not in manifest")
+            build_bundle(manifest, abi, output_dir, staging_base)
+        return 0
+    finally:
+        shutil.rmtree(staging_base, ignore_errors=True)
 
 
 if __name__ == "__main__":

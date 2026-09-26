@@ -82,6 +82,10 @@ val preparePortableRuntime =
         inputs.file(repoRoot.resolve("app/src/main/assets/local-runtime-manifest.json"))
         outputs.dir(generatedPortableRuntime)
         isIgnoreExitValue = !requirePortableAssets
+        doFirst {
+            // A failed run must not leave half-built staging for lint/merge to choke on.
+            generatedPortableRuntime.get().asFile.deleteRecursively()
+        }
         commandLine(
             "python3",
             repoRoot.resolve("scripts/prepare_portable_runtime.py").absolutePath,
