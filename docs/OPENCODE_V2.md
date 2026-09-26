@@ -50,6 +50,24 @@ server API, the plugin API, and parts of the config shape
   default to allow on an unconfigured server.
 - `switchAgent`/`switchModel` answer `204` empty. Prompt takes no agent/model (session-level).
 
+## Portable (offline) builds
+
+`scripts/prepare_portable_runtime.py` bakes a per-ABI rootfs (Alpine minirootfs + required
+packages + pinned OpenCode) into the APK at build time, so phone setup extracts instead of
+downloading:
+
+- Only fully hash-verified bytes land in a bundle (minirootfs SHA-256, APK sizes + SHA-1,
+  OpenCode tarball SHA-256/SHA-512). Anything unverified fails the script, never the bundle.
+- The tarball embeds `bundle-manifest.json` **first**; the installer verifies its pins against
+  the app manifest before extracting anything, and falls back to downloads when no bundle is
+  shipped for the ABI.
+- Required tools ship inside; optional tools (full dev set, Debian rootfs, CLIs, models) still
+  download on demand. The in-app OpenCode updater is unchanged.
+- The Gradle `preparePortableRuntime` step is best-effort: if the builder fails (e.g. Alpine
+  mirrors serve an index that does not match their own packages mid-rollout), the build stays
+  green and setup downloads. Pass `-Pandcode.requirePortableAssets=true` (or
+  `ANDCODE_REQUIRE_PORTABLE_ASSETS`) to fail release builds instead.
+
 ## Endpoint map (v1 → v2)
 
 | v1 | v2 | Notes |
