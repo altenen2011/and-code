@@ -241,7 +241,10 @@ def extract_apk_data(apk_bytes: bytes, rootfs: Path) -> None:
     """Layer an .apk into rootfs (no triggers; those run on device).
 
     Old-format packages nest a data.tar.gz payload; current ones store files inline next to
-    .PKGINFO/.SIGN metadata. Fully file-less entries are metapackages: nothing to layer.
+    .PKGINFO/.SIGN metadata (skipped). Fully file-less entries are metapackages: nothing to
+    layer. Later layers replace earlier ones: a stale file or dangling symlink in the way
+    (e.g. busybox's applet link shadowed by the real binary) is removed first, because
+    opening through it would otherwise fail or corrupt the link target.
     """
     with tarfile.open(fileobj=io.BytesIO(apk_bytes), mode="r:gz") as outer:
         members = outer.getmembers()
@@ -249,21 +252,28 @@ def extract_apk_data(apk_bytes: bytes, rootfs: Path) -> None:
         if nested is not None:
             data_bytes = outer.extractfile(nested).read()
             with tarfile.open(fileobj=io.BytesIO(data_bytes), mode="r:gz") as data:
-                for member in data.getmembers():
-                    _extract_member(data, member, rootfs)
+                _layer_members(data, rootfs)
             return
-        payload = [m for m in members if not m.name.startswith(".PKGINFO") and ".SIGN." not in m.name]
-        for member in payload:
-            _extract_member(outer, member, rootfs)
+        _layer_members(outer, rootfs)
 
 
-def _extract_member(tar: tarfile.TarFile, member: tarfile.TarInfo, rootfs: Path) -> None:
-    # Mirrors portable_filter + data_filter safeguards for a single member.
-    if member.issym() or member.islnk():
-        if os.path.isabs(member.linkname):
-            member.linkname = member.linkname.lstrip("/")
-    filtered = tarfile.data_filter(member, str(rootfs))
-    tar.extract(filtered, path=rootfs, filter="data")
+def _layer_members(tar: tarfile.TarFile, rootfs: Path) -> None:
+    payload = [
+        m
+        for m in tar.getmembers()
+        if m.name != "data.tar.gz"
+        and not m.name.startswith(".PKGINFO")
+        and ".SIGN." not in m.name
+    ]
+    for member in payload:
+        if member.isdir():
+            continue
+        target = rootfs / member.name
+        if os.path.lexists(target) and (target.is_symlink() or target.is_file()):
+            target.unlink()
+    tar.extractall(path=rootfs, members=payload, filter=portable_filter)
+
+
 
 
 def extract_member(tarball: bytes, member_name: str) -> bytes:
