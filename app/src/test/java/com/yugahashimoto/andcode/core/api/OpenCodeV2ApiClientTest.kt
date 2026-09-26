@@ -2,6 +2,8 @@ package com.yugahashimoto.andcode.core.api
 
 import com.yugahashimoto.andcode.data.connection.ConnectionProfile
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -89,6 +91,24 @@ class OpenCodeV2ApiClientTest {
             val request = server.takeRequest()
             assertEquals("/api/session/ses_abc/permission/per_1/reply", request.path)
             assertTrue(request.body.readUtf8().contains("once"))
+        }
+
+    @Test
+    fun `replies to form with answer object`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            val ok =
+                client.replyForm(
+                    "ses_abc",
+                    "frm_1",
+                    buildJsonObject { put("answer", buildJsonObject { put("choice", "yes") }) },
+                )
+
+            assertTrue(ok)
+            val request = server.takeRequest()
+            assertEquals("/api/session/ses_abc/form/frm_1/reply", request.path)
+            assertTrue(request.body.readUtf8().contains("choice"))
         }
 }
 

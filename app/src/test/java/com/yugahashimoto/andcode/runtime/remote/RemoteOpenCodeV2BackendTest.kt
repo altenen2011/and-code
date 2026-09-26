@@ -204,13 +204,13 @@ class RemoteOpenCodeV2BackendTest {
             val status = backend.vcsStatus("/ws")
 
             assertEquals("prj_1", projects[0].id)
-            assertEquals("/api/project", server.takeRequest().path)
+            assertEquals("/api/project", server.takePath(), "projects request")
             assertEquals("Main.kt", files[0].name)
-            assertEquals("/api/fs/list", server.takeRequest().path)
+            assertEquals("/api/fs/list", server.takePath(), "fs list request")
             assertEquals("main", vcs.branch)
-            assertEquals("/api/vcs", server.takeRequest().path)
+            assertEquals("/api/vcs", server.takePath(), "vcs request")
             assertEquals("a.kt", status[0].file)
-            assertEquals("/api/vcs/status", server.takeRequest().path)
+            assertEquals("/api/vcs/status", server.takePath(), "vcs status request")
         }
 
     @Test
@@ -225,12 +225,12 @@ class RemoteOpenCodeV2BackendTest {
 
             val ok = backend.answerQuestion("frm_1", listOf(listOf("yes")), null)
 
-            assertTrue(ok)
-            assertEquals("/api/form", server.takeRequest().path)
+            assertTrue("answer should succeed", ok)
+            assertEquals("/api/form", server.takePath(), "pending forms request")
             val reply = server.takeRequest()
-            assertEquals("/api/session/ses_1/form/frm_1/reply", reply.path)
-            assertTrue(reply.body.readUtf8().contains("choice"))
-            assertTrue(reply.body.readUtf8().contains("yes"))
+            assertEquals("/api/session/ses_1/form/frm_1/reply", reply.path, "form reply request")
+            assertTrue("reply carries field key", reply.body.readUtf8().contains("choice"))
+            assertTrue("reply carries answer", reply.body.readUtf8().contains("yes"))
         }
 
     @Test
@@ -241,7 +241,9 @@ class RemoteOpenCodeV2BackendTest {
             val ok = backend.rejectQuestion("frm_gone", null)
 
             assertTrue(ok)
-            assertEquals("/api/form", server.takeRequest().path)
+            assertEquals("/api/form", server.takePath())
             assertEquals(1, server.requestCount)
         }
+
+    private fun MockWebServer.takePath(): String = takeRequest().path?.substringBefore("?").orEmpty()
 }
