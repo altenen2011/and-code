@@ -62,7 +62,9 @@ class NpmOpenCodeReleaseClient(
         },
 ) {
     init {
-        require(registry.isHttps) { "npm registry must use HTTPS" }
+        require(registry.isHttps || registry.host in LOOPBACK_HOSTS) {
+            "npm registry must use HTTPS"
+        }
     }
 
     suspend fun latestVersion(): String =
@@ -150,6 +152,7 @@ class NpmOpenCodeReleaseClient(
         const val SCOPE = "@opencode"
         private const val USER_AGENT = "AndCode"
         private val INTEGRITY = Regex("^sha512-[A-Za-z0-9+/]+={0,2}$")
+        private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "::1")
         private val PLATFORM_PACKAGE_BY_ABI =
             mapOf(
                 "arm64-v8a" to "@opencode/cli-linux-arm64-musl",
