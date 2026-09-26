@@ -319,6 +319,22 @@ data class V2Form(
     val fields: List<JsonObject> = emptyList(),
 )
 
+/** Phase 4 models: background shells (long-running commands owned by the server). */
+
+@Serializable
+data class V2Shell(
+    val id: String = "",
+    val status: String = "",
+    val command: String = "",
+    val cwd: String? = null,
+)
+
+@Serializable
+data class V2ShellOutput(
+    val output: String = "",
+    val truncated: Boolean = false,
+)
+
 /** Phase 2c models: provider authentication through the integration/credential API. */
 
 @Serializable

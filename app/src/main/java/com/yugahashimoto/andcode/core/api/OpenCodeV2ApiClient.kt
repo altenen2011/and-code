@@ -299,6 +299,24 @@ class OpenCodeV2ApiClient(
         attemptId: String,
     ): Boolean = deleteUnit("api/integration/${encodePath(id)}/connect/oauth/${encodePath(attemptId)}")
 
+    /**
+     * Backgrounds the session's blocking tools so the turn continues without holding the
+     * caller. Progress keeps arriving on the event stream (`session.tool.*`, `shell.*`).
+     */
+    suspend fun background(sessionId: String): Boolean = postUnit("api/session/${encodePath(sessionId)}/background", JsonObject(emptyMap()))
+
+    suspend fun shells(location: String? = null): List<V2Shell> = getDataList("api/shell", query("location[directory]" to location))
+
+    suspend fun shellOutput(
+        id: String,
+        location: String? = null,
+    ): V2ShellOutput = getData("api/shell/${encodePath(id)}/output", query("location[directory]" to location))
+
+    suspend fun removeShell(
+        id: String,
+        location: String? = null,
+    ): Boolean = deleteUnit("api/shell/${encodePath(id)}", query("location[directory]" to location))
+
     suspend fun removeCredential(id: String): Boolean = deleteUnit("api/credential/${encodePath(id)}")
 
     suspend fun activateCredential(id: String): Boolean = postUnit("api/credential/${encodePath(id)}/activate", JsonObject(emptyMap()))

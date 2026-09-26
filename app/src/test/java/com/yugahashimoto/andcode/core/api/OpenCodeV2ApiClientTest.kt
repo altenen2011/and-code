@@ -110,6 +110,45 @@ class OpenCodeV2ApiClientTest {
             assertEquals("/api/session/ses_abc/form/frm_1/reply", request.path)
             assertTrue(request.body.readUtf8().contains("choice"))
         }
+
+    @Test
+    fun `lists shells and reads output`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"sh_1","status":"running","command":"sleep 60"}]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"output":"partial...","cursor":9,"size":9,"truncated":true}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setResponseCode(204))
+
+            val shells = client.shells()
+            val output = client.shellOutput("sh_1")
+            val removed = client.removeShell("sh_1")
+
+            assertEquals("sh_1", shells.single().id)
+            assertEquals("running", shells.single().status)
+            assertEquals("/api/shell", server.takePath())
+            assertTrue(output.truncated)
+            assertEquals("/api/shell/sh_1/output", server.takePath())
+            assertTrue(removed)
+            assertEquals("/api/shell/sh_1", server.takePath())
+        }
+
+    @Test
+    fun `backgrounds a session without a body`() =
+        runBlocking {
+            server.enqueue(MockResponse().setResponseCode(204))
+
+            assertTrue(client.background("ses_abc"))
+            assertEquals("/api/session/ses_abc/background", server.takeRequest().path)
+        }
+
+    private fun MockWebServer.takePath(): String = takeRequest().path?.substringBefore("?").orEmpty()
 }
 
 class OpenCodeV2EventParserTest {
