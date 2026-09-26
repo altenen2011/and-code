@@ -11,6 +11,8 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 object RuntimeArchive {
+    private const val SHA512_PREFIX = "sha512-"
+
     /** Extracts the data member of a Debian .deb without invoking a guest package manager. */
     fun extractDebianPackage(
         input: InputStream,
@@ -51,6 +53,36 @@ object RuntimeArchive {
         val actual = sha256(file)
         require(actual.equals(expected, ignoreCase = true)) {
             "SHA-256 mismatch for ${file.name}: expected $expected, got $actual"
+        }
+    }
+
+    /**
+     * Verifies an npm registry `dist.integrity` value (`sha512-<base64>`). Only sha512 is
+     * supported: it is the only algorithm the registry publishes for every version, and it is
+     * what the OpenCode v2 channel pins in the runtime manifest.
+     */
+    fun verifyNpmIntegrity(
+        file: File,
+        integrity: String,
+    ) {
+        val base64 =
+            if (integrity.startsWith(SHA512_PREFIX)) {
+                integrity.removePrefix(SHA512_PREFIX)
+            } else {
+                error("Unsupported integrity algorithm (want sha512-...): $integrity")
+            }
+        val expected = java.util.Base64.getDecoder().decode(base64)
+        val digest = MessageDigest.getInstance("SHA-512")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        require(digest.digest().contentEquals(expected)) {
+            "SHA-512 mismatch for ${file.name}"
         }
     }
 

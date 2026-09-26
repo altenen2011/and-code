@@ -1,7 +1,8 @@
 {
   "schemaVersion": 1,
   "runtimeVersion": "2026.07.25.1",
-  "openCodeVersion": "1.18.5",
+  "openCodeVersion": "2.0.18",
+  "openCodeChannel": "npm",
   "alpineVersion": "3.24.1",
   "port": 4097,
   "architectures": {
@@ -9,13 +10,17 @@
       "alpineUrl": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz",
       "alpineSha256": "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259",
       "openCodeUrl": "https://github.com/anomalyco/opencode/releases/download/v1.18.5/opencode-linux-arm64-musl.tar.gz",
-      "openCodeSha256": "d493f6d15bd4c2cb429d59c5213ea237128f4dd889a9426983b4c6e5d2c047ae"
+      "openCodeSha256": "d493f6d15bd4c2cb429d59c5213ea237128f4dd889a9426983b4c6e5d2c047ae",
+      "npmTarballUrl": "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.0.18.tgz",
+      "npmIntegrity": "sha512-CbXZDRMMrzTyGH259prvFHbHluyMRI8yoJiTYiWme9WI5sTr1N36elOR4+/DJrwYlbnCQPzp89HS/5iuLns4Jw=="
     },
     "x86_64": {
       "alpineUrl": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz",
       "alpineSha256": "41f73e3cf5fa919b8aa5ca6b30dc48f0da2720776d7423e2a7748211456fe081",
       "openCodeUrl": "https://github.com/anomalyco/opencode/releases/download/v1.18.5/opencode-linux-x64-musl.tar.gz",
-      "openCodeSha256": "f164e852c7ff98aff99efd039f3ac2acdd1717e25f6b94c471e2c827522f672c"
+      "openCodeSha256": "f164e852c7ff98aff99efd039f3ac2acdd1717e25f6b94c471e2c827522f672c",
+      "npmTarballUrl": "https://registry.npmjs.org/@opencode/cli-linux-x64-musl/-/cli-linux-x64-musl-2.0.18.tgz",
+      "npmIntegrity": "sha512-PQzxDlkIEotzbSE4PCozr50ysgI+teS2tgkBOkh4Mrn+d74F/o7CvPYMpG1wViAFdwgotpFPCFbyu1GmZboifA=="
     }
   }
 }

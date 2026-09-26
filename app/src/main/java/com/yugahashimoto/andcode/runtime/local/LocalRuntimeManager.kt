@@ -35,6 +35,11 @@ data class LocalRuntimeMetadata(
     /** Legacy runtimes installed the complete Alpine toolchain, but not its Debian equivalent. */
     @SerialName("fullDevelopmentToolsInstalled") val fullDevelopmentToolsInstalled: Boolean = true,
     @SerialName("fullDebianDevelopmentToolsInstalled") val fullDebianDevelopmentToolsInstalled: Boolean = false,
+    /**
+     * Password the on-device `opencode serve` requires (v2 servers are password-protected).
+     * Blank on runtimes installed before passwords existed; v1 servers ignore it either way.
+     */
+    @SerialName("serverPassword") val serverPassword: String = "",
 ) {
     fun has(agent: LocalAgent): Boolean = agent.id in components
 
@@ -93,6 +98,8 @@ class LocalRuntimeManager(
     }
 
     fun installedPort(): Int? = readMetadata()?.port
+
+    fun installedServerPassword(): String? = readMetadata()?.serverPassword?.takeIf { it.isNotBlank() }
 
     fun isHealthy(): Boolean = installedPort()?.let(portProbe) == true
 
@@ -587,7 +594,11 @@ class LocalRuntimeManager(
                 )
             // Runtimes installed before the guest MCP provisioning existed pick it up here; the
             // call is idempotent and a failure must never block the runtime start.
-            runCatching { installer?.provisionGuestCapabilitiesForExistingInstall() }
+            runCatching {
+                installer?.provisionGuestCapabilitiesForExistingInstall(
+                    useV2Config = installed.metadata.version.startsWith("2"),
+                )
+            }
             // Before the server starts, so its first turn already reads the selected preset.
             applyOpenCodeSystemPrompt(installed.rootfs, systemPrompt())
             if (!portProbe(installed.metadata.port)) launcher.start(installed)

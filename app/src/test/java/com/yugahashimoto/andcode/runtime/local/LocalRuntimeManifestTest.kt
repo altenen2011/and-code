@@ -47,4 +47,56 @@ class LocalRuntimeManifestTest {
             invalid.validate("arm64-v8a")
         }
     }
+
+    @Test
+    fun `npm channel validates tarball and integrity instead of github asset`() {
+        val npmArchitecture =
+            architecture.copy(
+                npmTarballUrl = "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/pkg.tgz",
+                npmIntegrity = "sha512-" + "A".repeat(86) + "==",
+            )
+        val manifest =
+            LocalRuntimeManifest(
+                schemaVersion = 1,
+                runtimeVersion = "2026.09.26.1",
+                openCodeVersion = "2.0.18",
+                openCodeChannel = LocalRuntimeManifest.CHANNEL_NPM,
+                alpineVersion = "3.24.1",
+                port = 4097,
+                architectures = mapOf("arm64-v8a" to npmArchitecture),
+            )
+
+        manifest.validate()
+    }
+
+    @Test
+    fun `npm channel rejects missing integrity`() {
+        val invalid =
+            architecture.copy(
+                npmTarballUrl = "https://registry.npmjs.org/pkg.tgz",
+                npmIntegrity = null,
+            )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            invalid.validate("arm64-v8a", LocalRuntimeManifest.CHANNEL_NPM)
+        }
+    }
+
+    @Test
+    fun `manifest rejects unknown channel`() {
+        val manifest =
+            LocalRuntimeManifest(
+                schemaVersion = 1,
+                runtimeVersion = "2026.09.26.1",
+                openCodeVersion = "2.0.18",
+                openCodeChannel = "ftp",
+                alpineVersion = "3.24.1",
+                port = 4097,
+                architectures = mapOf("arm64-v8a" to architecture),
+            )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            manifest.validate()
+        }
+    }
 }

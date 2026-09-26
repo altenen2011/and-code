@@ -14,8 +14,12 @@ server API, the plugin API, and parts of the config shape
   Not wired into targets yet — the running app still uses the v1 backend.
 - [ ] Phase 2b: wire targets to v2 (with version detection + v1 fallback), port files/vcs/
   projects/diff/todo/mcp/config/commands/skills/auth/forms, verify against a live 2.x server.
-- [ ] Phase 3: v2 on-device runtime (manifest, updater with sha512 verification, v2 config
-  shapes), then drop the v1 client.
+- [ ] Phase 3: v2 on-device runtime, then drop the v1 client.
+  - [x] 3a (this branch): npm-channel manifest, sha512 verification, npm-tarball install,
+    per-install serve password (env + profile), v2 `mcp.servers` provisioning, v2 `providers`
+    custom-provider sync. Fresh installs on this build run OpenCode 2.0.18.
+  - [ ] 3b: in-app 1.x→2.x updater (npm check + sha512 re-download + password backfill).
+- [ ] Phase 2c: v2 provider auth UI (integration/credential API in Settings).
 
 ## Phase 1 contents
 

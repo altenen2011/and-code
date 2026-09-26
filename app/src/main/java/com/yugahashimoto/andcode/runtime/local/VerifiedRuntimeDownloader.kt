@@ -18,10 +18,14 @@ class VerifiedRuntimeDownloader(
     suspend fun download(
         url: String,
         destination: File,
-        expectedSha256: String,
+        expectedSha256: String = "",
         expectedSizeBytes: Long? = null,
         headers: Map<String, String> = emptyMap(),
         onProgress: (Float?) -> Unit = {},
+        verify: (File) -> Unit = { file ->
+            require(expectedSha256.isNotBlank()) { "Missing SHA-256 expectation" }
+            RuntimeArchive.verifySha256(file, expectedSha256)
+        },
     ) = operationMutex.withLock {
         withContext(Dispatchers.IO) {
             downloadLocked(
@@ -31,6 +35,7 @@ class VerifiedRuntimeDownloader(
                 expectedSizeBytes = expectedSizeBytes,
                 headers = headers,
                 onProgress = onProgress,
+                verify = verify,
             )
         }
     }
@@ -42,12 +47,13 @@ class VerifiedRuntimeDownloader(
         expectedSizeBytes: Long?,
         headers: Map<String, String>,
         onProgress: (Float?) -> Unit,
+        verify: (File) -> Unit,
     ) {
         val parsedUrl = url.toHttpUrl()
         require(parsedUrl.isHttps || parsedUrl.host in LOOPBACK_HOSTS) {
             "Runtime download URL must use HTTPS"
         }
-        require(SHA256.matches(expectedSha256)) { "Invalid expected SHA-256" }
+        require(expectedSha256.isBlank() || SHA256.matches(expectedSha256)) { "Invalid expected SHA-256" }
         require(expectedSizeBytes == null || expectedSizeBytes > 0L) {
             "Expected download size must be positive"
         }
@@ -71,7 +77,7 @@ class VerifiedRuntimeDownloader(
                 downloaded > 0L &&
                     (expectedSizeBytes == null || downloaded == expectedSizeBytes) &&
                     runCatching {
-                        RuntimeArchive.verifySha256(partial, expectedSha256)
+                        verify(partial)
                     }.isSuccess
             if (!partialAlreadyComplete && expectedSizeBytes != null && downloaded == expectedSizeBytes) {
                 partial.delete()
@@ -94,6 +100,7 @@ class VerifiedRuntimeDownloader(
                             expectedSizeBytes = expectedSizeBytes,
                             headers = headers,
                             onProgress = onProgress,
+                            verify = verify,
                         )
                     }
                     require(response.isSuccessful) {
@@ -131,13 +138,13 @@ class VerifiedRuntimeDownloader(
                     }
                 }
                 validationFailed = true
-                RuntimeArchive.verifySha256(partial, expectedSha256)
+                verify(partial)
                 validationFailed = false
             }
 
             if (destination.isFile &&
                 runCatching {
-                    RuntimeArchive.verifySha256(destination, expectedSha256)
+                    verify(destination)
                 }.isSuccess
             ) {
                 partial.delete()

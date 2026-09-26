@@ -45,6 +45,7 @@ class LocalRuntimeTarget(
         LocalOpenCodeBackend(
             runtimeManager = runtimeManager,
             useV2 = { isV2Status(runtimeManager.status()) },
+            passwordProvider = { runtimeManager.installedServerPassword() },
         ),
     private val messages: LocalRuntimeMessages = LocalRuntimeMessages,
 ) : RuntimeTarget {

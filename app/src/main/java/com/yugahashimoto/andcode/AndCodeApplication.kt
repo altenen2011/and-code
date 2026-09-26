@@ -294,7 +294,12 @@ class AndCodeApplication : Application() {
                 githubToken = { settings.githubToken },
                 beforeStart = { installed ->
                     runCatching { providerCredentials.syncToRuntime(installed.rootfs) }
-                    runCatching { customProviders.syncToRuntime(installed.rootfs) }
+                    runCatching {
+                        customProviders.syncToRuntime(
+                            installed.rootfs,
+                            useV2Providers = installed.metadata.version.startsWith("2"),
+                        )
+                    }
                     runCatching {
                         GitCredentialHelper(installed.rootfs) { settings.githubToken }.let { helper ->
                             if (settings.githubToken.isNullOrBlank()) helper.remove() else helper.install()

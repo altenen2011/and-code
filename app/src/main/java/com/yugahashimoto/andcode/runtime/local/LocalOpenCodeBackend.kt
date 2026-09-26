@@ -38,6 +38,7 @@ import kotlinx.serialization.json.JsonObject
 class LocalOpenCodeBackend(
     private val portProvider: () -> Int?,
     private val useV2: () -> Boolean = { false },
+    private val passwordProvider: () -> String? = { null },
     private val backendFactory: (ConnectionProfile) -> OpenCodeBackend = { profile ->
         if (useV2()) RemoteOpenCodeV2Backend(profile) else RemoteOpenCodeBackend(profile)
     },
@@ -45,9 +46,11 @@ class LocalOpenCodeBackend(
     constructor(
         runtimeManager: LocalRuntimeManager,
         useV2: () -> Boolean = { false },
+        passwordProvider: () -> String? = { null },
     ) : this(
         portProvider = runtimeManager::installedPort,
         useV2 = useV2,
+        passwordProvider = passwordProvider,
     )
 
     override val id: String = "local-android"
@@ -73,6 +76,7 @@ class LocalOpenCodeBackend(
                         name = displayName,
                         baseUrl = "http://127.0.0.1:$port/",
                         username = "opencode",
+                        password = passwordProvider(),
                         allowInsecureLan = true,
                     ),
                 )

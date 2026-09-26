@@ -76,17 +76,32 @@ class CustomProviderStore(
      * store previously wrote there itself (tracked via [loadSyncedIds]/[saveSyncedIds]) so a
      * provider defined some other way — or by hand-editing the file — is left untouched.
      */
-    fun syncToRuntime(rootfs: File): File {
+    fun syncToRuntime(
+        rootfs: File,
+        useV2Providers: Boolean = false,
+    ): File {
         val configFile = File(rootfs, "root/.config/opencode/opencode.json")
         val existingRoot = readExistingPayload(configFile)
-        val providers = (existingRoot["provider"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+        val key = if (useV2Providers) "providers" else "provider"
+        val providers = (existingRoot[key] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
 
         val current = definitions()
         val currentIds = current.map { it.id }.toSet()
         (loadSyncedIds() - currentIds).forEach(providers::remove)
-        current.forEach { definition -> providers[definition.id] = definition.toProviderConfig() }
+        current.forEach { definition ->
+            providers[definition.id] =
+                if (useV2Providers) definition.toProviderConfigV2() else definition.toProviderConfig()
+        }
 
-        val updatedRoot = JsonObject(existingRoot + ("provider" to JsonObject(providers)))
+        var updatedRoot = JsonObject(existingRoot + (key to JsonObject(providers)))
+        if (useV2Providers) {
+            // Upgrades leave v1 entries behind under the legacy key; remove the ones we own so a
+            // stale duplicate never shadows the v2 entry.
+            val legacy = (updatedRoot["provider"] as? JsonObject)?.toMutableMap()
+            if (legacy != null && legacy.keys.removeAll(currentIds)) {
+                updatedRoot = JsonObject(updatedRoot + ("provider" to JsonObject(legacy)))
+            }
+        }
         if (updatedRoot != existingRoot) {
             writeAtomically(configFile, json.encodeToString(updatedRoot))
         }
@@ -162,6 +177,29 @@ internal fun CustomProviderDefinition.toProviderConfig(): JsonObject =
         put("npm", "@ai-sdk/openai-compatible")
         put("name", name)
         put("options", buildJsonObject { put("baseURL", baseUrl) })
+        put(
+            "models",
+            buildJsonObject {
+                models.forEach { modelId -> put(modelId, buildJsonObject { put("name", modelId) }) }
+            },
+        )
+    }
+
+/**
+ * The OpenCode v2 `providers.<id>` shape: `npm` becomes the `aisdk:`-prefixed `package`,
+ * endpoint and credentials move into `settings`. Model names are kept as-is; v2 resolves them
+ * against the provider at runtime.
+ */
+internal fun CustomProviderDefinition.toProviderConfigV2(): JsonObject =
+    buildJsonObject {
+        put("package", "aisdk:@ai-sdk/openai-compatible")
+        put("name", name)
+        put(
+            "settings",
+            buildJsonObject {
+                put("baseURL", baseUrl)
+            },
+        )
         put(
             "models",
             buildJsonObject {
