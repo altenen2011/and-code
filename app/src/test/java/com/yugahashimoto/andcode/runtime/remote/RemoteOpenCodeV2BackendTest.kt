@@ -229,8 +229,9 @@ class RemoteOpenCodeV2BackendTest {
             assertEquals("pending forms request", "/api/form", server.takePath())
             val reply = server.takeRequest()
             assertEquals("form reply request", "/api/session/ses_1/form/frm_1/reply", reply.path)
-            assertTrue("reply carries field key", reply.body.readUtf8().contains("choice"))
-            assertTrue("reply carries answer", reply.body.readUtf8().contains("yes"))
+            val replyBody = reply.body.readUtf8()
+            assertTrue("reply carries field key", replyBody.contains("choice"))
+            assertTrue("reply carries answer", replyBody.contains("yes"))
         }
 
     @Test
