@@ -26,7 +26,7 @@ fun V2Session.toSession(): OpenCodeSession =
             ),
     )
 
-fun V2ModelRef.toModelReference(): OpenCodeModelReference = OpenCodeModelReference(providerID = providerId, modelID = id)
+fun V2ModelRef.toModelReference(): OpenCodeModelReference = OpenCodeModelReference(providerId = providerId, modelId = id)
 
 /**
  * Best-effort message mapping. `user`/`assistant` kinds keep their role; every other v2 entry
@@ -49,7 +49,7 @@ fun V2Message.toMessage(): OpenCodeMessage {
                 OpenCodePart(
                     type = "text",
                     text = text,
-                    messageID = messageId,
+                    messageId = messageId,
                     sessionId = sessionId,
                 ),
             )
@@ -92,7 +92,7 @@ fun toProviderCatalog(
                             model.id to
                                 OpenCodeModel(
                                     id = model.id,
-                                    providerID = model.providerId,
+                                    providerId = model.providerId,
                                     name = model.displayName,
                                 )
                         },
