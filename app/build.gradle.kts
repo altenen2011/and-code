@@ -194,13 +194,6 @@ android {
             // android.util.Log is a stub on the unit test classpath and throws on every call.
             // Returning defaults instead lets tests exercise code that logs on its error paths.
             isReturnDefaultValues = true
-            all {
-                testLogging {
-                    showExceptions = true
-                    showStackTraces = true
-                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                }
-            }
         }
     }
     lint {
@@ -381,5 +374,15 @@ tasks.register("generateNoticeAggregate") {
                 sections.joinToString("\n"),
         )
         println("Wrote ${sections.size} embedded NOTICE file(s) out of ${artifacts.size} artifacts to ${outputFile.path}")
+    }
+}
+
+// Show full failure stacks in CI logs while the OpenCode v2 migration lands; the new
+// client/backend tests iterate faster when assertion values are visible.
+tasks.withType<Test> {
+    testLogging {
+        showExceptions = true
+        showStackTraces = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
