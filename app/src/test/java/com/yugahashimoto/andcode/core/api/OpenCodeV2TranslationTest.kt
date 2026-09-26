@@ -9,8 +9,8 @@ import org.junit.Test
 
 class OpenCodeV2TranslationTest {
     @Test
-    fun `converts epoch seconds to milliseconds`() {
-        assertEquals(1500L, v2EpochSecondsToMillis(1.5))
+    fun `keeps millisecond timestamps as is`() {
+        assertEquals(1790440217782L, v2TimestampToMillis(1790440217782.0))
     }
 
     @Test
@@ -19,13 +19,13 @@ class OpenCodeV2TranslationTest {
             V2Session(
                 id = "ses_1",
                 title = "Mobile",
-                time = V2SessionTime(created = 1.0, updated = 2.0, archived = 3.0),
+                time = V2SessionTime(created = 1790440217782.0, updated = 1790440217783.0, archived = 1790440217784.0),
             ).toSession()
 
         assertEquals("ses_1", session.id)
         assertEquals("Mobile", session.title)
-        assertEquals(1000L, session.time.created)
-        assertEquals(3000L, session.time.archived)
+        assertEquals(1790440217782L, session.time.created)
+        assertEquals(1790440217784L, session.time.archived)
     }
 
     @Test

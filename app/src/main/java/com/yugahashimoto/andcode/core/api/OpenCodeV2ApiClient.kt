@@ -75,12 +75,17 @@ class OpenCodeV2ApiClient(
 
     suspend fun deleteSession(sessionId: String): Boolean = deleteUnit("api/session/${encodePath(sessionId)}")
 
+    /**
+     * Renames a session. `PATCH` answers `204` with an empty body, so the fresh title is read
+     * back with a `GET` (verified against live 2.0.18).
+     */
     suspend fun renameSession(
         sessionId: String,
         title: String,
     ): V2Session {
         val body = buildJsonObject { put("title", title) }
-        return patchDataOrDirect("api/session/${encodePath(sessionId)}", body)
+        patchUnit("api/session/${encodePath(sessionId)}", body)
+        return session(sessionId)
     }
 
     suspend fun messages(sessionId: String): List<V2Message> =
@@ -424,6 +429,19 @@ class OpenCodeV2ApiClient(
                     .patch(body.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
             execute(request) { responseBody -> decodeDataOrDirect<T>(responseBody, path) }
+        }
+
+    private suspend fun patchUnit(
+        path: String,
+        body: JsonObject,
+        queryParameters: List<Pair<String, String>> = emptyList(),
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val request =
+                requestBuilder(path, queryParameters)
+                    .patch(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+            execute(request) { true }
         }
 
     private suspend fun postUnit(

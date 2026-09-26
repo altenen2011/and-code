@@ -151,6 +151,24 @@ class RemoteOpenCodeV2BackendTest {
         }
 
     @Test
+    fun `rename patches then reads back the session`() =
+        runBlocking {
+            server.enqueue(MockResponse().setResponseCode(204))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"id":"ses_1","title":"New","time":{"created":1790440217782,"updated":1790440217783}}""",
+                ),
+            )
+
+            val session = backend.renameSession("ses_1", "New")
+
+            assertEquals("New", session.title)
+            assertEquals(1790440217782L, session.time.created)
+            assertEquals("/api/session/ses_1", server.takePath())
+            assertEquals("/api/session/ses_1", server.takePath())
+        }
+
+    @Test
     fun `permission answers map remember to always`() =
         runBlocking {
             server.enqueue(MockResponse().setBody("""{}"""))

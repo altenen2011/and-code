@@ -14,8 +14,8 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 fun V2ServerInfo.toHealth(): OpenCodeHealth = OpenCodeHealth(healthy = version.isNotBlank(), version = version)
 
-/** V2 timestamps are epoch seconds (fractional); v1 uses epoch milliseconds. */
-fun v2EpochSecondsToMillis(seconds: Double): Long = (seconds * 1000.0).toLong()
+/** V2 timestamps are epoch milliseconds (verified against a live 2.0.18 server). */
+fun v2TimestampToMillis(timestamp: Double): Long = timestamp.toLong()
 
 fun V2Session.toSession(): OpenCodeSession =
     OpenCodeSession(
@@ -24,9 +24,9 @@ fun V2Session.toSession(): OpenCodeSession =
         projectId = projectId,
         time =
             OpenCodeTime(
-                created = v2EpochSecondsToMillis(time.created),
-                updated = v2EpochSecondsToMillis(time.updated),
-                archived = time.archived?.let(::v2EpochSecondsToMillis),
+                created = v2TimestampToMillis(time.created),
+                updated = v2TimestampToMillis(time.updated),
+                archived = time.archived?.let(::v2TimestampToMillis),
             ),
     )
 
