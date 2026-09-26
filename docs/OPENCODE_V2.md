@@ -35,6 +35,21 @@ server API, the plugin API, and parts of the config shape
   (`sha512-*`) instead of GitHub asset digests.
 - Unit tests for all of the above (`MockWebServer`, no network).
 
+## Live-verified behavior (2.0.18 loopback server)
+
+- `serve` requires auth (Basic `opencode` + password) even on loopback; `OPENCODE_SERVER_PASSWORD`
+  is honored. The app generates a per-install password and sends it both as env and profile auth.
+- Session/message times are epoch **milliseconds** (schema just says `number`).
+- `POST prompt` returns the inbox entry; progress arrives as `session.text.delta` (with
+  `assistantMessageID` + `ordinal`) and completion as `session.step.ended` (`finish: "stop"`).
+- Failures surface as `session.retry.scheduled` (with `error.{type,message}`) and
+  `retry` blocks on the assistant message — never as a dedicated error event.
+- `PATCH session` answers `204` empty: rename re-reads the session. `DELETE` destroys (no
+  archive route exists in v2 — archive stays unsupported and safely skipped).
+- Tool calls emit `session.tool.*` + `shell.*` (no session id on shell frames); permissions
+  default to allow on an unconfigured server.
+- `switchAgent`/`switchModel` answer `204` empty. Prompt takes no agent/model (session-level).
+
 ## Endpoint map (v1 → v2)
 
 | v1 | v2 | Notes |

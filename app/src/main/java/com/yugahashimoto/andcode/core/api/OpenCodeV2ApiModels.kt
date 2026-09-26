@@ -181,6 +181,12 @@ sealed interface V2Event {
 
     data class MessageUpserted(val sessionId: String?, val message: V2Message) : V2Event
 
+    /** A busy/idle hint that keeps the chat spinner and refresh triggers in sync. */
+    data class StatusChanged(val sessionId: String?, val status: String) : V2Event
+
+    /** A turn failed (or a retry was scheduled with an error to show). */
+    data class RunFailed(val sessionId: String?, val message: String?, val name: String?) : V2Event
+
     data class PermissionAsked(val request: V2PermissionRequest) : V2Event
 
     data class FormAsked(val sessionId: String?, val formId: String?, val summary: String?) : V2Event
@@ -195,6 +201,10 @@ fun V2Event.sessionIdOrNull(): String? =
         is V2Event.SessionDeleted -> sessionId
         is V2Event.MessageDelta -> sessionId
         is V2Event.MessageUpserted -> sessionId ?: message.sessionId
+        is V2Event.StatusChanged -> sessionId
+        is V2Event.RunFailed -> sessionId
+        is V2Event.StatusChanged -> sessionId
+        is V2Event.RunFailed -> sessionId
         is V2Event.PermissionAsked -> request.sessionId
         is V2Event.FormAsked -> sessionId
         is V2Event.ServerConnected -> null

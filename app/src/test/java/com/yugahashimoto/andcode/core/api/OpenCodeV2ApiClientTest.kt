@@ -116,7 +116,7 @@ class OpenCodeV2EventParserTest {
     private val parser = OpenCodeV2EventParser()
 
     @Test
-    fun `parses session updated from encoded string payload`() {
+    fun `maps legacy session updated from encoded string payload`() {
         val inner = """{"type":"session.updated","properties":{"info":{"id":"ses_abc","title":"Mobile"}}}"""
         val frame = """{"id":"1","event":"session.updated","data":${jsonString(inner)}}"""
 
@@ -152,6 +152,74 @@ class OpenCodeV2EventParserTest {
         val event = parser.parse(null, "not-json{")
 
         assertTrue(event is V2Event.Unknown)
+    }
+
+    @Test
+    fun `parses live server connected frame`() {
+        val event = parser.parse(null, """{"id":"evt_1","type":"server.connected","data":{}}""")
+
+        assertTrue(event is V2Event.ServerConnected)
+    }
+
+    @Test
+    fun `parses live text delta frame`() {
+        val frame =
+            """{"id":"evt_2","created":1790441281571,"type":"session.text.delta","data":{"sessionID":"ses_1","assistantMessageID":"msg_9","ordinal":0,"delta":"Hi!"}}"""
+
+        val event = parser.parse(null, frame)
+
+        assertTrue(event is V2Event.MessageDelta)
+        val delta = event as V2Event.MessageDelta
+        assertEquals("ses_1", delta.sessionId)
+        assertEquals("msg_9", delta.messageId)
+        assertEquals("text-0", delta.partId)
+        assertEquals("Hi!", delta.delta)
+    }
+
+    @Test
+    fun `parses live step ended frame as idle`() {
+        val frame =
+            """{"id":"evt_3","type":"session.step.ended","data":{"sessionID":"ses_1","assistantMessageID":"msg_9","finish":"stop"}}"""
+
+        val event = parser.parse(null, frame)
+
+        assertEquals(V2Event.StatusChanged("ses_1", "idle"), event)
+    }
+
+    @Test
+    fun `parses live retry scheduled frame as failure with provider message`() {
+        val frame =
+            """{"id":"evt_4","type":"session.retry.scheduled","data":{"sessionID":"ses_1","assistantMessageID":"msg_9","attempt":2,"error":{"type":"provider.internal","message":"No channel","status":503}}}"""
+
+        val event = parser.parse(null, frame)
+
+        assertTrue(event is V2Event.RunFailed)
+        val failed = event as V2Event.RunFailed
+        assertEquals("ses_1", failed.sessionId)
+        assertTrue(failed.message!!.contains("No channel"))
+        assertEquals("provider.internal", failed.name)
+    }
+
+    @Test
+    fun `sessionless shell frames stay unknown`() {
+        val event =
+            parser.parse(
+                null,
+                """{"id":"evt_5","type":"shell.exited","data":{"id":"sh_1","exit":0,"status":"exited"}}""",
+            )
+
+        assertTrue(event is V2Event.Unknown)
+    }
+
+    @Test
+    fun `tool called frame keeps the session busy`() {
+        val event =
+            parser.parse(
+                null,
+                """{"id":"evt_6","type":"session.tool.called","data":{"sessionID":"ses_1","assistantMessageID":"msg_9","id":"call_1"}}""",
+            )
+
+        assertEquals(V2Event.StatusChanged("ses_1", "busy"), event)
     }
 
     private fun jsonString(raw: String): String = '"' + raw.replace("\\", "\\\\").replace("\"", "\\\"") + '"'

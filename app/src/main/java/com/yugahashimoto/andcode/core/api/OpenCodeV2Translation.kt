@@ -116,6 +116,12 @@ fun V2Event.toEvent(): OpenCodeEvent =
         is V2Event.SessionUpdated -> OpenCodeEvent.SessionUpdated(session.toSession())
         is V2Event.SessionDeleted -> OpenCodeEvent.Unknown("session.deleted", sessionId.orEmpty())
         is V2Event.MessageUpserted -> OpenCodeEvent.MessageUpdated(message.toMessage().info)
+        is V2Event.StatusChanged ->
+            OpenCodeEvent.SessionStatusChanged(
+                sessionId = sessionId.orEmpty(),
+                status = status,
+            )
+        is V2Event.RunFailed -> OpenCodeEvent.SessionError(sessionId, message, name)
         is V2Event.MessageDelta ->
             OpenCodeEvent.MessagePartDelta(
                 sessionId = sessionId.orEmpty(),

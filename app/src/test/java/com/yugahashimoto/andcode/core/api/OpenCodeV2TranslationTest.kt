@@ -149,6 +149,17 @@ class OpenCodeV2TranslationTest {
     }
 
     @Test
+    fun `maps status and failure events`() {
+        val idle = V2Event.StatusChanged("ses_1", "idle").toEvent()
+        assertTrue(idle is OpenCodeEvent.SessionStatusChanged)
+        assertEquals("idle", (idle as OpenCodeEvent.SessionStatusChanged).status)
+
+        val failed = V2Event.RunFailed("ses_1", "provider.internal: No channel", "provider.internal").toEvent()
+        assertTrue(failed is OpenCodeEvent.SessionError)
+        assertEquals("provider.internal: No channel", (failed as OpenCodeEvent.SessionError).message)
+    }
+
+    @Test
     fun `maps legacy git diff mode to working`() {
         assertEquals("working", v2VcsMode("git"))
         assertEquals("branch", v2VcsMode("branch"))
