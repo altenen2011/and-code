@@ -40,11 +40,12 @@ data class V2ModelRef(
 ) {
     /** `provider/model#variant`, the canonical v2 model reference used by prompt and switch calls. */
     val canonical: String
-        get() = buildString {
-            if (providerId.isNotBlank()) append(providerId).append('/')
-            append(id)
-            if (!variant.isNullOrBlank()) append('#').append(variant)
-        }
+        get() =
+            buildString {
+                if (providerId.isNotBlank()) append(providerId).append('/')
+                append(id)
+                if (!variant.isNullOrBlank()) append('#').append(variant)
+            }
 }
 
 @Serializable
@@ -136,6 +137,7 @@ internal fun v2MessageFromJson(element: JsonObject): V2Message {
 /** Collects every string stored under a `text` key, depth-first. Good enough for chat display. */
 private fun collectV2Text(element: JsonElement): String {
     val out = StringBuilder()
+
     fun visit(node: JsonElement) {
         when (node) {
             is JsonObject ->

@@ -65,8 +65,7 @@ class OpenCodeV2ApiClient(
         return postDataOrDirect("api/session", body)
     }
 
-    suspend fun deleteSession(sessionId: String): Boolean =
-        deleteUnit("api/session/${encodePath(sessionId)}")
+    suspend fun deleteSession(sessionId: String): Boolean = deleteUnit("api/session/${encodePath(sessionId)}")
 
     suspend fun renameSession(
         sessionId: String,
@@ -105,8 +104,7 @@ class OpenCodeV2ApiClient(
         return postDataOrDirect("api/session/${encodePath(sessionId)}/prompt", body)
     }
 
-    suspend fun interrupt(sessionId: String): Boolean =
-        postUnit("api/session/${encodePath(sessionId)}/interrupt", JsonObject(emptyMap()))
+    suspend fun interrupt(sessionId: String): Boolean = postUnit("api/session/${encodePath(sessionId)}/interrupt", JsonObject(emptyMap()))
 
     suspend fun permissionRequests(sessionId: String): List<V2PermissionRequest> =
         getDataList("api/session/${encodePath(sessionId)}/permission")

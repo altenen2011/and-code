@@ -41,7 +41,9 @@ class NpmOpenCodeReleaseClientTest {
             server.enqueue(MockResponse().setBody("""{"version":"2.0.18"}"""))
             server.enqueue(
                 MockResponse().setBody(
-                    """{"version":"2.0.18","dist":{"tarball":"https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.0.18.tgz","integrity":"sha512-${"A".repeat(86)}=="}}""",
+                    """{"version":"2.0.18","dist":{"tarball":"https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.0.18.tgz","integrity":"sha512-${"A".repeat(
+                        86,
+                    )}=="}}""",
                 ),
             )
 
