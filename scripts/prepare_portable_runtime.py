@@ -158,6 +158,17 @@ def resolve_closure(
             key = item.split("=")[0].strip()
             if key and key not in provides:
                 provides[key] = name
+    # Virtuals the minirootfs already satisfies through its own packages resolve to those
+    # packages instead of re-downloading their apk split (e.g. /bin/sh from busybox).
+    preinstalled_provides: dict[str, str] = {}
+    for name, version in (provided or {}).items():
+        record = index.get(name)
+        if record is None:
+            continue
+        for item in record.get("p", "").split():
+            key = item.split("=")[0].strip()
+            if key:
+                preinstalled_provides.setdefault(key, name)
     resolved: list[dict] = []
     seen: set[str] = set()
     preinstalled: dict[str, str] = provided or {}
@@ -168,6 +179,12 @@ def resolve_closure(
         if name in preinstalled:
             seen.add(name)
             resolved.append({"P": name, "V": preinstalled[name], "_preinstalled": True})
+            return
+        provider = preinstalled_provides.get(name)
+        if provider is not None:
+            seen.add(name)
+            seen.add(provider)
+            resolved.append({"P": provider, "V": preinstalled[provider], "_preinstalled": True})
             return
         record = index.get(name) or (index.get(provides[name]) if name in provides else None)
         if record is None:
