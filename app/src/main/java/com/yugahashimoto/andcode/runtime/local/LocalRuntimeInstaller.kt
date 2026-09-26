@@ -97,54 +97,71 @@ class LocalRuntimeInstaller(
             staging.mkdirs()
 
             try {
-                val alpineArchive = File(cache, "alpine-${manifest.alpineVersion}-$abi.tar.gz")
-                download(
-                    architecture.alpineUrl,
-                    alpineArchive,
-                    architecture.alpineSha256,
-                    0.05f,
-                    0.22f,
-                    context.getString(R.string.install_step_downloading_alpine),
-                    onShared,
-                )
                 val withOpenCode = LocalAgent.OPEN_CODE in requestedAgents
-                val openCodeArchive =
-                    File(cache, "opencode-${manifest.openCodeVersion}-$abi.tar.gz").takeIf { withOpenCode }?.also { archive ->
-                        if (manifest.openCodeChannel == LocalRuntimeManifest.CHANNEL_NPM) {
-                            downloadIntegrity(
-                                requireNotNull(architecture.npmTarballUrl) {
-                                    "npm channel manifest is missing the tarball URL for $abi"
-                                },
-                                archive,
-                                requireNotNull(architecture.npmIntegrity) {
-                                    "npm channel manifest is missing the integrity hash for $abi"
-                                },
-                                0.24f,
-                                0.72f,
-                                context.getString(R.string.install_step_downloading_opencode),
-                                onShared,
-                            )
-                        } else {
-                            download(
-                                architecture.openCodeUrl,
-                                archive,
-                                architecture.openCodeSha256,
-                                0.24f,
-                                0.72f,
-                                context.getString(R.string.install_step_downloading_opencode),
-                                onShared,
-                            )
-                        }
-                    }
-
                 val rootfs = File(staging, "rootfs").apply { mkdirs() }
-                onShared(0.75f, context.getString(R.string.install_step_extracting_linux_env))
-                alpineArchive.inputStream().use { RuntimeArchive.extractTarGz(it, rootfs) }
+                // A portable bundle baked into the APK provisions fully offline; otherwise fall
+                // back to the classic download-everything flow.
+                val offline = extractPortableBundle(abi, rootfs, manifest, architecture, cache, onShared)
+                val openCodeBinary: File? =
+                    if (offline) {
+                        if (withOpenCode) {
+                            File(rootfs, "usr/local/bin/opencode").also { binary ->
+                                require(binary.isFile) { "Portable bundle is missing the opencode binary" }
+                                require(binary.setExecutable(true, false) || binary.canExecute()) {
+                                    "Unable to mark OpenCode executable"
+                                }
+                            }
+                        } else {
+                            File(rootfs, "usr/local/bin/opencode").takeIf { it.exists() }?.delete()
+                            null
+                        }
+                    } else {
+                        val alpineArchive = File(cache, "alpine-${manifest.alpineVersion}-$abi.tar.gz")
+                        download(
+                            architecture.alpineUrl,
+                            alpineArchive,
+                            architecture.alpineSha256,
+                            0.05f,
+                            0.22f,
+                            context.getString(R.string.install_step_downloading_alpine),
+                            onShared,
+                        )
+                        val openCodeArchive =
+                            File(cache, "opencode-${manifest.openCodeVersion}-$abi.tar.gz").takeIf { withOpenCode }?.also { archive ->
+                                if (manifest.openCodeChannel == LocalRuntimeManifest.CHANNEL_NPM) {
+                                    downloadIntegrity(
+                                        requireNotNull(architecture.npmTarballUrl) {
+                                            "npm channel manifest is missing the tarball URL for $abi"
+                                        },
+                                        archive,
+                                        requireNotNull(architecture.npmIntegrity) {
+                                            "npm channel manifest is missing the integrity hash for $abi"
+                                        },
+                                        0.24f,
+                                        0.72f,
+                                        context.getString(R.string.install_step_downloading_opencode),
+                                        onShared,
+                                    )
+                                } else {
+                                    download(
+                                        architecture.openCodeUrl,
+                                        archive,
+                                        architecture.openCodeSha256,
+                                        0.24f,
+                                        0.72f,
+                                        context.getString(R.string.install_step_downloading_opencode),
+                                        onShared,
+                                    )
+                                }
+                            }
 
-                val openCodeBinary =
-                    openCodeArchive?.let { archive ->
-                        onShared(0.85f, context.getString(R.string.install_step_extracting_opencode))
-                        extractOpenCode(archive, staging, rootfs)
+                        onShared(0.75f, context.getString(R.string.install_step_extracting_linux_env))
+                        alpineArchive.inputStream().use { RuntimeArchive.extractTarGz(it, rootfs) }
+
+                        openCodeArchive?.let { archive ->
+                            onShared(0.85f, context.getString(R.string.install_step_extracting_opencode))
+                            extractOpenCode(archive, staging, rootfs)
+                        }
                     }
                 configureRootfs(rootfs, commandSuite, useV2Config = manifest.openCodeVersion.startsWith("2"))
                 val antigravityRootfs =
@@ -187,11 +204,14 @@ class LocalRuntimeInstaller(
                 installPackages(
                     rootfs = rootfs,
                     suite = commandSuite,
+                    // A portable bundle already carries the required set: only refresh
+                    // certificates locally, and still fetch the optional tools on demand.
                     packages =
-                        if (includeFullDevelopmentTools) {
-                            REQUIRED_RUNTIME_PACKAGES + OPTIONAL_DEVELOPMENT_PACKAGES
-                        } else {
-                            REQUIRED_RUNTIME_PACKAGES
+                        when {
+                            offline && includeFullDevelopmentTools -> OPTIONAL_DEVELOPMENT_PACKAGES
+                            offline -> emptyList()
+                            includeFullDevelopmentTools -> REQUIRED_RUNTIME_PACKAGES + OPTIONAL_DEVELOPMENT_PACKAGES
+                            else -> REQUIRED_RUNTIME_PACKAGES
                         },
                 )
                 if (LocalAgent.CLAUDE_CODE in requestedAgents) {
@@ -485,6 +505,57 @@ class LocalRuntimeInstaller(
         onProgress(endProgress, label)
     }
 
+    /**
+     * Provisions the rootfs from the portable bundle baked into the APK instead of downloading
+     * anything. Returns false when no bundle is shipped for [abi] so setup falls back to the
+     * online flow. A bundle whose pins disagree with [manifest] fails fast rather than
+     * installing mismatched versions.
+     */
+    private suspend fun extractPortableBundle(
+        abi: String,
+        rootfs: File,
+        manifest: LocalRuntimeManifest,
+        architecture: LocalRuntimeArchitecture,
+        cache: File,
+        onShared: (Float?, String) -> Unit,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val tmp = File(cache, "portable-$abi.tar.gz")
+            try {
+                context.assets.open("portable-rootfs-$abi.tar.gz").use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+            } catch (error: IOException) {
+                tmp.delete()
+                return@withContext false
+            }
+            try {
+                onShared(0.30f, context.getString(R.string.install_step_extracting_linux_env))
+                verifyPortableBundle(tmp, manifest, architecture, abi)
+                tmp.inputStream().use { RuntimeArchive.extractTarGz(it, rootfs) }
+                File(rootfs, "bundle-manifest.json").delete()
+                true
+            } finally {
+                tmp.delete()
+            }
+        }
+
+    private fun verifyPortableBundle(
+        bundle: File,
+        manifest: LocalRuntimeManifest,
+        architecture: LocalRuntimeArchitecture,
+        abi: String,
+    ) {
+        val payload =
+            org.apache.commons.compress.archivers.tar.TarFile(bundle).use { tar ->
+                val entry =
+                    tar.entries.firstOrNull { it.name == "bundle-manifest.json" }
+                        ?: error("Portable bundle is missing its manifest")
+                tar.getInputStream(entry).bufferedReader().use { it.readText() }
+            }
+        verifyPortableBundleManifest(JSONObject(payload), manifest, architecture, abi)
+    }
+
     private fun installPackages(
         rootfs: File,
         suite: EmbeddedCommandSuite.Paths,
@@ -516,8 +587,14 @@ class LocalRuntimeInstaller(
                 "/bin/sh",
                 "-lc",
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
-                    "/sbin/apk --cache-dir /var/cache/apk add ${packages.joinToString(" ")} && " +
-                    "/usr/sbin/update-ca-certificates",
+                    if (packages.isEmpty()) {
+                        // Portable bundles ship packages pre-installed; only the certificate
+                        // bundle needs rebuilding inside the fresh rootfs, fully offline.
+                        "/usr/sbin/update-ca-certificates"
+                    } else {
+                        "/sbin/apk --cache-dir /var/cache/apk add ${packages.joinToString(" ")} && " +
+                            "/usr/sbin/update-ca-certificates"
+                    },
             )
         val installLog =
             File(runtimeDirectory, "logs/tool-install.log").apply {
@@ -841,4 +918,38 @@ internal fun generateServerPassword(): String {
     val alphabet = ('a'..'z') + ('A'..'Z') + ('0'..'9')
     val random = SecureRandom()
     return (1..32).map { alphabet[random.nextInt(alphabet.size)] }.joinToString("")
+}
+
+/**
+ * Checks a portable bundle's embedded manifest against the app's own pins before anything is
+ * extracted from it. Pure so unit tests can drive it without Android.
+ */
+internal fun verifyPortableBundleManifest(
+    bundle: JSONObject,
+    manifest: LocalRuntimeManifest,
+    architecture: LocalRuntimeArchitecture,
+    abi: String,
+) {
+    require(bundle.optInt("schemaVersion") == 1) { "Unsupported portable bundle for $abi" }
+    require(bundle.optString("alpineVersion") == manifest.alpineVersion) {
+        "Portable bundle Alpine version does not match the manifest for $abi"
+    }
+    require(bundle.optString("alpineSha256") == architecture.alpineSha256) {
+        "Portable bundle Alpine digest does not match the manifest for $abi"
+    }
+    require(bundle.optString("openCodeVersion") == manifest.openCodeVersion) {
+        "Portable bundle OpenCode version does not match the manifest for $abi"
+    }
+    require(bundle.optString("openCodeChannel") == manifest.openCodeChannel) {
+        "Portable bundle OpenCode channel does not match the manifest for $abi"
+    }
+    val expectedIntegrity =
+        if (manifest.openCodeChannel == LocalRuntimeManifest.CHANNEL_NPM) {
+            architecture.npmIntegrity
+        } else {
+            architecture.openCodeSha256
+        }
+    require(bundle.optString("openCodeIntegrity") == expectedIntegrity) {
+        "Portable bundle OpenCode integrity does not match the manifest for $abi"
+    }
 }

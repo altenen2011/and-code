@@ -28,6 +28,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import sys
 import tarfile
 import urllib.request
@@ -81,6 +82,15 @@ def npm_integrity_ok(data: bytes, integrity: str) -> None:
         raise ValueError("npm tarball SHA-512 mismatch")
 
 
+def fetch_index(branch: str, arch: str) -> tuple[dict[str, dict], str]:
+    """Fetch main+community indexes merged; returns (index, source description)."""
+    index: dict[str, dict] = {}
+    for repo in ("main", "community"):
+        url = f"{ALPINE_CDN}/v{branch}/{repo}/{arch}/APKINDEX.tar.gz"
+        index.update(parse_apkindex(fetch(url)))
+    return index, ALPINE_CDN
+
+
 def parse_apkindex(data: bytes) -> dict[str, dict]:
     """Parse an APKINDEX.tar.gz into {pkgname: {version, depends, checksum, size}}."""
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
@@ -108,8 +118,39 @@ def clean_dep_token(token: str) -> str:
     return token.strip()
 
 
-def resolve_closure(index: dict[str, dict], roots: list[str]) -> list[dict]:
-    """Depth-first post-order dependency closure over APKINDEX records."""
+def parse_installed_db(rootfs: Path) -> dict[str, str]:
+    """Read Alpine's installed DB ({rootfs}/lib/apk/db/installed) as {name: version}."""
+    db = rootfs / "lib" / "apk" / "db" / "installed"
+    if not db.is_file():
+        return {}
+    provided: dict[str, str] = {}
+    name = version = ""
+    for line in db.read_text().splitlines():
+        if not line.strip():
+            if name:
+                provided[name] = version
+            name = version = ""
+            continue
+        tag, _, value = line.partition(":")
+        if tag == "P":
+            name = value
+        elif tag == "V":
+            version = value
+    if name:
+        provided[name] = version
+    return provided
+
+
+def resolve_closure(
+    index: dict[str, dict],
+    roots: list[str],
+    provided: dict[str, str] | None = None,
+) -> list[dict]:
+    """Depth-first post-order dependency closure over APKINDEX records.
+
+    Packages already present in the minirootfs (``provided``) are recorded with
+    ``source: minirootfs`` and never re-downloaded.
+    """
     provides: dict[str, str] = {}
     for name, record in index.items():
         for item in record.get("p", "").split():
@@ -119,9 +160,14 @@ def resolve_closure(index: dict[str, dict], roots: list[str]) -> list[dict]:
                 provides[key] = name
     resolved: list[dict] = []
     seen: set[str] = set()
+    preinstalled: dict[str, str] = provided or {}
 
     def visit(name: str) -> None:
         if name in seen:
+            return
+        if name in preinstalled:
+            seen.add(name)
+            resolved.append({"P": name, "V": preinstalled[name], "_preinstalled": True})
             return
         record = index.get(name) or (index.get(provides[name]) if name in provides else None)
         if record is None:
@@ -152,6 +198,19 @@ def apk_sha1(record: dict) -> str:
     return raw.hex()
 
 
+def portable_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
+    """Like tarfile's data filter, but rewrites absolute symlink targets to archive-relative.
+
+    Alpine packages linkBusyBox-style (``/bin/busybox``); inside a rootfs tree those must
+    resolve under the tree, not the build host.
+    """
+    if member.issym() or member.islnk():
+        target = member.linkname
+        if os.path.isabs(target):
+            member.linkname = target.lstrip("/")
+    return tarfile.data_filter(member, dest_path)
+
+
 def extract_apk_data(apk_bytes: bytes, rootfs: Path) -> None:
     """Layer an .apk's data.tar.gz into rootfs (no triggers; those run on device)."""
     with tarfile.open(fileobj=io.BytesIO(apk_bytes), mode="r:gz") as outer:
@@ -160,7 +219,7 @@ def extract_apk_data(apk_bytes: bytes, rootfs: Path) -> None:
             raise RuntimeError("APK has no data.tar.gz")
         data_bytes = outer.extractfile(data_member).read()
     with tarfile.open(fileobj=io.BytesIO(data_bytes), mode="r:gz") as data:
-        data.extractall(path=rootfs, filter="data")
+        data.extractall(path=rootfs, filter=portable_filter)
 
 
 def extract_member(tarball: bytes, member_name: str) -> bytes:
@@ -184,27 +243,8 @@ def build_bundle(manifest: dict, android_abi: str, output_dir: Path) -> Path:
         raise RuntimeError("Alpine minirootfs SHA-256 mismatch")
     print(f"[{android_abi}] minirootfs {len(minirootfs) // 1024} KiB verified", flush=True)
 
-    # 2. Resolve + fetch the required APK set (online index, recorded hashes).
-    repos = ["main", "community"]
-    index: dict[str, dict] = {}
-    for repo in repos:
-        url = f"{ALPINE_CDN}/v{alpine_branch}/{repo}/{alpine_arch}/APKINDEX.tar.gz"
-        index.update(parse_apkindex(fetch(url)))
-    closure = resolve_closure(index, REQUIRED_PACKAGES)
-    print(f"[{android_abi}] resolved {len(closure)} packages", flush=True)
-    apk_blobs: list[tuple[dict, bytes]] = []
-    for record in closure:
-        # The filename is unique per repo; probe main then community to find the host.
-        url = locate_apk(manifest, alpine_branch, alpine_arch, repos, record)
-        blob = fetch(url)
-        if len(blob) != int(record["S"]):
-            raise RuntimeError(f"Size mismatch for {apk_filename(record)}")
-        if hashlib.sha1(blob).hexdigest() != apk_sha1(record):
-            raise RuntimeError(f"SHA-1 mismatch for {apk_filename(record)}")
-        apk_blobs.append((record, blob))
-    print(f"[{android_abi}] fetched {sum(len(b) for _, b in apk_blobs) // 1024} KiB of apks", flush=True)
-
-    # 3. Assemble the rootfs.
+    # 2. Extract it first: whatever it already ships (musl, busybox, keys) is authoritative
+    # and never re-downloaded, which also sidesteps index/file skew on those packages.
     staging = output_dir / f"portable-staging-{android_abi}"
     if staging.exists():
         import shutil
@@ -213,7 +253,23 @@ def build_bundle(manifest: dict, android_abi: str, output_dir: Path) -> Path:
     rootfs = staging / "rootfs"
     rootfs.mkdir(parents=True)
     with tarfile.open(fileobj=io.BytesIO(minirootfs), mode="r:gz") as tar:
-        tar.extractall(path=rootfs, filter="data")
+        tar.extractall(path=rootfs, filter=portable_filter)
+    preinstalled = parse_installed_db(rootfs)
+    print(f"[{android_abi}] minirootfs ships {len(preinstalled)} packages", flush=True)
+
+    # 3. Resolve + fetch the remaining APK set (online index, recorded hashes).
+    repos = ["main", "community"]
+    index, _ = fetch_index(alpine_branch, alpine_arch)
+    closure = resolve_closure(index, REQUIRED_PACKAGES, preinstalled)
+    needed = [r for r in closure if not r.get("_preinstalled")]
+    print(f"[{android_abi}] resolved {len(closure)} packages ({len(needed)} to fetch)", flush=True)
+    apk_blobs: list[tuple[dict, bytes]] = []
+    for record in needed:
+        # The CDN index can lag a rebuilt package (same version, new hash). Refresh the index
+        # once before giving up so a mid-rollout mirror does not poison the whole build.
+        blob = fetch_apk_verified(alpine_branch, alpine_arch, repos, record, index)
+        apk_blobs.append((record, blob))
+    print(f"[{android_abi}] fetched {sum(len(b) for _, b in apk_blobs) // 1024} KiB of apks", flush=True)
     for record, blob in apk_blobs:
         extract_apk_data(blob, rootfs)
 
@@ -248,13 +304,23 @@ def build_bundle(manifest: dict, android_abi: str, output_dir: Path) -> Path:
         "openCodeChannel": channel,
         "openCodeIntegrity": arch_record.get("npmIntegrity") or arch_record.get("openCodeSha256"),
         "packages": [
-            {"name": r["P"], "version": r["V"], "size": int(r["S"]), "sha1": apk_sha1(r)}
-            for r, _ in apk_blobs
+            {
+                "name": r["P"],
+                "version": r["V"],
+                "size": int(r["S"]) if "S" in r else 0,
+                "sha1": apk_sha1(r) if "C" in r else "",
+                "source": "minirootfs" if r.get("_preinstalled") else "apk",
+            }
+            for r in closure
         ],
     }
-    (rootfs / "bundle-manifest.json").write_text(json.dumps(bundle_manifest, indent=2))
+    manifest_file = staging / "bundle-manifest.json"
+    manifest_file.write_text(json.dumps(bundle_manifest, indent=2))
     out = output_dir / f"portable-rootfs-{android_abi}.tar.gz"
     with tarfile.open(out, mode="w:gz", compresslevel=6) as tar:
+        # The manifest goes first so the installer can verify pins from the stream before
+        # extracting anything.
+        tar.add(manifest_file, arcname="bundle-manifest.json")
         tar.add(rootfs, arcname=".")
     digest = sha256_hex(out.read_bytes())
     (output_dir / f"portable-rootfs-{android_abi}.sha256").write_text(f"{digest}  {out.name}\n")
@@ -262,7 +328,39 @@ def build_bundle(manifest: dict, android_abi: str, output_dir: Path) -> Path:
     return out
 
 
-def locate_apk(manifest: dict, branch: str, arch: str, repos: list[str], record: dict) -> str:
+def fetch_apk_verified(
+    branch: str,
+    arch: str,
+    repos: list[str],
+    record: dict,
+    index: dict[str, dict],
+) -> bytes:
+    """Fetch one APK with size + SHA-1 verification, refreshing a lagging index once."""
+    try:
+        return fetch_apk_once(branch, arch, repos, record)
+    except RuntimeError as first:
+        refreshed, _ = fetch_index(branch, arch)
+        index.update(refreshed)
+        fresh = refreshed.get(record["P"])
+        if fresh is None or fresh.get("V") != record.get("V"):
+            raise first
+        try:
+            return fetch_apk_once(branch, arch, repos, fresh)
+        except RuntimeError:
+            raise first
+
+
+def fetch_apk_once(branch: str, arch: str, repos: list[str], record: dict) -> bytes:
+    url = locate_apk(branch, arch, repos, record)
+    blob = fetch(url)
+    if len(blob) != int(record["S"]):
+        raise RuntimeError(f"Size mismatch for {apk_filename(record)}")
+    if hashlib.sha1(blob).hexdigest() != apk_sha1(record):
+        raise RuntimeError(f"SHA-1 mismatch for {apk_filename(record)}")
+    return blob
+
+
+def locate_apk(branch: str, arch: str, repos: list[str], record: dict) -> str:
     # Repositories are disjoint by package name in practice; probe main then community with a
     # cheap HEAD-equivalent (urllib has no HEAD helper here, so stream one byte via Range).
     name = apk_filename(record)
