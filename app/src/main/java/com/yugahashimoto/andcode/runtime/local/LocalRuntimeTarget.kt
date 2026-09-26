@@ -44,7 +44,7 @@ class LocalRuntimeTarget(
     private val backend: LocalOpenCodeBackend =
         LocalOpenCodeBackend(
             runtimeManager = runtimeManager,
-            useV2 = { isV2Runtime() },
+            useV2 = { isV2Status(runtimeManager.status()) },
         ),
     private val messages: LocalRuntimeMessages = LocalRuntimeMessages,
 ) : RuntimeTarget {
@@ -56,7 +56,7 @@ class LocalRuntimeTarget(
     override val capabilities: RuntimeCapabilities
         get() = if (isV2Runtime()) V2_CAPABILITIES else V1_CAPABILITIES
 
-    private fun isV2Runtime(): Boolean = (runtimeManager.status() as? LocalRuntimeStatus.Ready)?.version?.startsWith("2") == true
+    private fun isV2Runtime(): Boolean = isV2Status(runtimeManager.status())
 
     private val mutableState = MutableStateFlow(mapStatus(runtimeManager.status()))
     override val state: StateFlow<RuntimeState> = mutableState.asStateFlow()
@@ -335,6 +335,9 @@ class LocalRuntimeTarget(
         }
 
     companion object {
+        internal fun isV2Status(status: LocalRuntimeStatus): Boolean =
+            (status as? LocalRuntimeStatus.Ready)?.version?.startsWith("2") == true
+
         private val V1_CAPABILITIES =
             RuntimeCapabilities(
                 permissions = true,
