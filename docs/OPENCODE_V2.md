@@ -9,8 +9,11 @@ server API, the plugin API, and parts of the config shape
 
 - [x] Phase 1 (this branch): additive v2 API layer + npm-based v2 release resolution. No v1
   behavior changed; the app still builds and runs against v1 exactly as before.
-- [ ] Phase 2: port `OpenCodeBackend` implementations to the v2 client, port event handling
-  (permissions, forms, streaming), verify against a live 2.x server.
+- [x] Phase 2a (this branch): v2→v1 translation + `RemoteOpenCodeV2Backend` (chat core: sessions,
+  messages, prompt with session agent/model switching, interrupt, permissions, command, events).
+  Not wired into targets yet — the running app still uses the v1 backend.
+- [ ] Phase 2b: wire targets to v2 (with version detection + v1 fallback), port files/vcs/
+  projects/diff/todo/mcp/config/commands/skills/auth/forms, verify against a live 2.x server.
 - [ ] Phase 3: v2 on-device runtime (manifest, updater with sha512 verification, v2 config
   shapes), then drop the v1 client.
 

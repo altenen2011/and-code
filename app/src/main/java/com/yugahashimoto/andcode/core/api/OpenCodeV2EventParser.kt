@@ -54,18 +54,51 @@ class OpenCodeV2EventParser(
                         (properties["sessionID"] as? JsonPrimitive)?.content
                             ?: (properties["id"] as? JsonPrimitive)?.content,
                     )
-                "message.delta", "message.part.delta", "message.updated", "message.part.updated" ->
+                "message.delta", "message.part.delta" -> {
+                    val part = properties["part"] as? JsonObject ?: properties
                     V2Event.MessageDelta(
-                        sessionId = (properties["sessionID"] as? JsonPrimitive)?.content,
+                        sessionId =
+                            (properties["sessionID"] as? JsonPrimitive)?.content
+                                ?: (part["sessionID"] as? JsonPrimitive)?.content,
+                        messageId =
+                            (properties["messageID"] as? JsonPrimitive)?.content
+                                ?: (part["messageID"] as? JsonPrimitive)?.content,
+                        partId =
+                            (properties["partID"] as? JsonPrimitive)?.content
+                                ?: (part["id"] as? JsonPrimitive)?.content,
                         delta =
                             (properties["delta"] as? JsonPrimitive)?.content
-                                ?: (properties["text"] as? JsonPrimitive)?.content,
+                                ?: (part["text"] as? JsonPrimitive)?.content,
                     )
+                }
+                "message.updated" -> {
+                    val source =
+                        (properties["message"] as? JsonObject)
+                            ?: (properties["info"] as? JsonObject)
+                            ?: properties
+                    val message = v2MessageFromJson(source)
+                    V2Event.MessageUpserted(
+                        sessionId =
+                            message.sessionId
+                                ?: (properties["sessionID"] as? JsonPrimitive)?.content,
+                        message = message,
+                    )
+                }
+                "message.part.updated" -> {
+                    val part = (properties["part"] as? JsonObject) ?: properties
+                    V2Event.MessageDelta(
+                        sessionId = (part["sessionID"] as? JsonPrimitive)?.content,
+                        messageId = (part["messageID"] as? JsonPrimitive)?.content,
+                        partId = (part["id"] as? JsonPrimitive)?.content,
+                        delta = (part["text"] as? JsonPrimitive)?.content,
+                    )
+                }
                 "permission.asked", "permission.updated", "permission.requested" ->
                     V2Event.PermissionAsked(decodePermission(properties))
                 "form.created", "form.updated", "question.asked" ->
                     V2Event.FormAsked(
                         sessionId = (properties["sessionID"] as? JsonPrimitive)?.content,
+                        formId = (properties["id"] as? JsonPrimitive)?.content,
                         summary =
                             (properties["title"] as? JsonPrimitive)?.content
                                 ?: (properties["message"] as? JsonPrimitive)?.content,

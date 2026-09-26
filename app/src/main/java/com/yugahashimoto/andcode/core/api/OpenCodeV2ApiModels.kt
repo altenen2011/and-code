@@ -95,6 +95,13 @@ data class V2Model(
         get() = name?.takeIf { it.isNotBlank() } ?: modelId ?: id
 }
 
+/** File attachment for `POST /api/session/{id}/prompt` (`PromptInput.FileAttachment`). */
+@Serializable
+data class V2FileAttachment(
+    val uri: String,
+    val name: String? = null,
+)
+
 /** The `{data: ...}` inbox entry returned by `POST /api/session/{id}/prompt`. */
 @Serializable
 data class V2InboxEntry(
@@ -165,11 +172,18 @@ sealed interface V2Event {
 
     data class SessionDeleted(val sessionId: String?) : V2Event
 
-    data class MessageDelta(val sessionId: String?, val delta: String?) : V2Event
+    data class MessageDelta(
+        val sessionId: String?,
+        val messageId: String?,
+        val partId: String?,
+        val delta: String?,
+    ) : V2Event
+
+    data class MessageUpserted(val sessionId: String?, val message: V2Message) : V2Event
 
     data class PermissionAsked(val request: V2PermissionRequest) : V2Event
 
-    data class FormAsked(val sessionId: String?, val summary: String?) : V2Event
+    data class FormAsked(val sessionId: String?, val formId: String?, val summary: String?) : V2Event
 
     data class Unknown(val type: String, val raw: String) : V2Event
 }
@@ -180,6 +194,7 @@ fun V2Event.sessionIdOrNull(): String? =
         is V2Event.SessionUpdated -> session.id
         is V2Event.SessionDeleted -> sessionId
         is V2Event.MessageDelta -> sessionId
+        is V2Event.MessageUpserted -> sessionId ?: message.sessionId
         is V2Event.PermissionAsked -> request.sessionId
         is V2Event.FormAsked -> sessionId
         is V2Event.ServerConnected -> null

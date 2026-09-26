@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -89,21 +90,73 @@ class OpenCodeV2ApiClient(
     /**
      * Queues a user message in the session inbox and returns the inbox entry. Unlike v1's
      * fire-and-forget `prompt_async`, the turn is tracked through the event stream and the
-     * session inbox (`GET /api/session/{id}/inbox`).
+     * session inbox (`GET /api/session/{id}/inbox`). Agent/model are session-level in v2 — use
+     * [switchAgent]/[switchModel] before prompting (see `docs/OPENCODE_V2.md`).
      */
     suspend fun prompt(
         sessionId: String,
         text: String,
-        agent: String? = null,
-        model: String? = null,
+        files: List<V2FileAttachment> = emptyList(),
     ): V2InboxEntry {
         val body =
             buildJsonObject {
                 put("text", text)
-                agent?.takeIf { it.isNotBlank() }?.let { put("agent", it) }
-                model?.takeIf { it.isNotBlank() }?.let { put("model", it) }
+                if (files.isNotEmpty()) {
+                    put(
+                        "files",
+                        buildJsonArray {
+                            files.forEach { file ->
+                                add(
+                                    buildJsonObject {
+                                        put("uri", file.uri)
+                                        file.name?.takeIf { it.isNotBlank() }?.let { put("name", it) }
+                                    },
+                                )
+                            }
+                        },
+                    )
+                }
             }
         return postDataOrDirect("api/session/${encodePath(sessionId)}/prompt", body)
+    }
+
+    suspend fun switchAgent(
+        sessionId: String,
+        agent: String,
+    ): Boolean {
+        val body = buildJsonObject { put("agent", agent) }
+        return postUnit("api/session/${encodePath(sessionId)}/agent", body)
+    }
+
+    suspend fun switchModel(
+        sessionId: String,
+        model: V2ModelRef,
+    ): Boolean {
+        val body =
+            buildJsonObject {
+                put(
+                    "model",
+                    buildJsonObject {
+                        put("id", model.id)
+                        put("providerID", model.providerId)
+                        model.variant?.takeIf { it.isNotBlank() }?.let { put("variant", it) }
+                    },
+                )
+            }
+        return postUnit("api/session/${encodePath(sessionId)}/model", body)
+    }
+
+    suspend fun executeCommand(
+        sessionId: String,
+        name: String,
+        text: String,
+    ) {
+        val body =
+            buildJsonObject {
+                put("name", name)
+                put("text", text)
+            }
+        postUnit("api/session/${encodePath(sessionId)}/command", body)
     }
 
     suspend fun interrupt(sessionId: String): Boolean = postUnit("api/session/${encodePath(sessionId)}/interrupt", JsonObject(emptyMap()))
