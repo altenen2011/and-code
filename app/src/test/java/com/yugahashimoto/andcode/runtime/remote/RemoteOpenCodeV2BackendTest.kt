@@ -177,4 +177,71 @@ class RemoteOpenCodeV2BackendTest {
             assertEquals(listOf("user", "assistant"), messages.map { it.info.role })
             assertEquals("hi", messages[0].text)
         }
+
+    @Test
+    fun `projects files and vcs map from location routes`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""[{"id":"prj_1","canonical":"repo","name":"Repo"}]"""))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"path":"src/Main.kt","type":"file"}]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"provider":"git","branch":{"current":"main","default":"main"}}}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"file":"a.kt","additions":3,"deletions":1,"status":"modified"}]}""",
+                ),
+            )
+
+            val projects = backend.listProjects()
+            val files = backend.listFiles("/ws", ".")
+            val vcs = backend.vcsInfo("/ws")
+            val status = backend.vcsStatus("/ws")
+
+            assertEquals("prj_1", projects[0].id)
+            assertEquals("/api/project", server.takeRequest().path)
+            assertEquals("Main.kt", files[0].name)
+            assertEquals("/api/fs/list", server.takeRequest().path)
+            assertEquals("main", vcs.branch)
+            assertEquals("/api/vcs", server.takeRequest().path)
+            assertEquals("a.kt", status[0].file)
+            assertEquals("/api/vcs/status", server.takeRequest().path)
+        }
+
+    @Test
+    fun `answers resolve the form then reply with first field key`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"frm_1","sessionID":"ses_1","title":"Pick one","fields":[{"key":"choice","type":"string"}]}]}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            val ok = backend.answerQuestion("frm_1", listOf(listOf("yes")), null)
+
+            assertTrue(ok)
+            assertEquals("/api/form", server.takeRequest().path)
+            val reply = server.takeRequest()
+            assertEquals("/api/session/ses_1/form/frm_1/reply", reply.path)
+            assertTrue(reply.body.readUtf8().contains("choice"))
+            assertTrue(reply.body.readUtf8().contains("yes"))
+        }
+
+    @Test
+    fun `rejecting a vanished form succeeds without a call`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{"location":{},"data":[]}"""))
+
+            val ok = backend.rejectQuestion("frm_gone", null)
+
+            assertTrue(ok)
+            assertEquals("/api/form", server.takeRequest().path)
+            assertEquals(1, server.requestCount)
+        }
 }

@@ -102,6 +102,58 @@ class OpenCodeV2TranslationTest {
         assertTrue(!V2ServerInfo().toHealth().healthy)
     }
 
+    @Test
+    fun `maps workspace browsing models`() {
+        val node = V2FileEntry(path = "src/Main.kt", type = "file").toFileNode()
+        assertEquals("Main.kt", node.name)
+        assertEquals("src/Main.kt", node.path)
+
+        val content = v2FileContent("a.kt", "hello")
+        assertEquals("hello", content.content)
+
+        val change =
+            V2FileDiff(file = "a.kt", patch = "@@\n", additions = 2L, deletions = 1L, status = "modified")
+                .toFileChange()
+        assertEquals("@@\n", change.patch)
+        assertEquals("modified", change.status)
+
+        val vcs = V2VcsInfo(provider = "git", branch = V2VcsBranch(current = "main")).toVcsInfo()
+        assertEquals("main", vcs.branch)
+
+        val project = V2Project(id = "prj_1", canonical = "repo", name = "Repo").toProject()
+        assertEquals("repo", project.worktree)
+    }
+
+    @Test
+    fun `maps mcp status objects to names`() {
+        val connected =
+            V2McpServer(
+                name = "playwright",
+                status = buildJsonObject { put("status", "connected") },
+            ).toMcpServer()
+        assertEquals("connected", connected.status)
+
+        val bare = V2McpServer(name = "x").toMcpServer()
+        assertEquals(null, bare.status)
+    }
+
+    @Test
+    fun `maps commands skills and forms`() {
+        assertEquals("review", V2Command(name = "review").toCommand().name)
+        assertEquals("s", V2Skill(id = "s", name = "", path = "p").toSkill().name)
+
+        val question = V2Form(id = "frm_1", sessionId = "ses_1", title = "Pick?").toQuestion()
+        assertEquals("frm_1", question.id)
+        assertEquals("ses_1", question.sessionId)
+        assertEquals("Pick?", question.questions[0].question)
+    }
+
+    @Test
+    fun `maps legacy git diff mode to working`() {
+        assertEquals("working", v2VcsMode("git"))
+        assertEquals("branch", v2VcsMode("branch"))
+    }
+
     private fun messageJson(
         id: String,
         type: String,

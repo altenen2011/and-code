@@ -1,5 +1,9 @@
 package com.yugahashimoto.andcode.core.api
 
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
 /**
  * Translates OpenCode v2 models/events into the v1 shapes the rest of the app (chat, pickers,
  * approvals) is built against.
@@ -132,3 +136,109 @@ fun V2Event.toEvent(): OpenCodeEvent =
             )
         is V2Event.Unknown -> OpenCodeEvent.Unknown(type, raw)
     }
+
+/** Phase 2b translations. Location-scoped v2 routes take the workspace directory as `location`. */
+
+fun V2Project.toProject(): OpenCodeProject =
+    OpenCodeProject(
+        id = id,
+        // V2 projects expose no worktree path; the canonical id keeps scoping keys stable.
+        worktree = canonical.orEmpty(),
+        name = name,
+    )
+
+fun V2LocationInfo.toPathInfo(): OpenCodePathInfo =
+    OpenCodePathInfo(
+        home = "",
+        state = "",
+        config = "",
+        worktree = project?.directory.orEmpty(),
+        directory = directory,
+    )
+
+fun V2LocationProject.toProject(): OpenCodeProject =
+    OpenCodeProject(
+        id = id,
+        worktree = directory,
+        name = canonical,
+    )
+
+fun V2FileEntry.toFileNode(): OpenCodeFileNode =
+    OpenCodeFileNode(
+        name = path.substringAfterLast('/').ifBlank { path },
+        path = path,
+        absolute = path,
+        type = type,
+    )
+
+fun v2FileContent(
+    path: String,
+    text: String,
+): OpenCodeFileContent =
+    OpenCodeFileContent(
+        type = "file",
+        content = text,
+        encoding = "utf8",
+    )
+
+fun V2FileStatus.toFileChange(): OpenCodeFileChange =
+    OpenCodeFileChange(
+        file = file,
+        additions = additions.toDouble(),
+        deletions = deletions.toDouble(),
+        status = status.takeIf { it.isNotBlank() },
+    )
+
+fun V2FileDiff.toFileChange(): OpenCodeFileChange =
+    OpenCodeFileChange(
+        file = file,
+        patch = patch,
+        additions = additions.toDouble(),
+        deletions = deletions.toDouble(),
+        status = status?.takeIf { it.isNotBlank() },
+    )
+
+fun V2VcsInfo.toVcsInfo(): OpenCodeVcsInfo =
+    OpenCodeVcsInfo(
+        branch = branch?.current,
+        defaultBranch = branch?.defaultBranch,
+    )
+
+fun V2McpServer.toMcpServer(): McpServer =
+    McpServer(
+        name = name,
+        status = v2McpStatusName(status),
+    )
+
+private fun v2McpStatusName(status: JsonElement?): String? =
+    when (status) {
+        is JsonObject -> (status["status"] as? JsonPrimitive)?.content
+        is JsonPrimitive -> status.content.takeIf { status.isString }
+        else -> null
+    }
+
+fun V2Command.toCommand(): OpenCodeCommand = OpenCodeCommand(name = name, description = description)
+
+fun V2Skill.toSkill(): OpenCodeSkill =
+    OpenCodeSkill(
+        name = name.ifBlank { id },
+        description = description,
+        location = path,
+    )
+
+fun V2Integration.toConfiguredProvider(): ConfiguredProvider =
+    ConfiguredProvider(
+        id = id,
+        name = name,
+        connected = connections.isNotEmpty(),
+    )
+
+fun V2Form.toQuestion(): QuestionRequest =
+    QuestionRequest(
+        id = id,
+        sessionId = sessionId,
+        questions = listOf(QuestionPrompt(question = title)),
+    )
+
+/** V1 `git` mode has no v2 counterpart; `working` is the closest review base. */
+fun v2VcsMode(mode: String): String = if (mode == "git") "working" else mode

@@ -200,3 +200,95 @@ fun V2Event.sessionIdOrNull(): String? =
         is V2Event.ServerConnected -> null
         is V2Event.Unknown -> null
     }
+
+/** Phase 2b models: workspace browsing, VCS, MCP, config, commands, skills, forms. */
+
+@Serializable
+data class V2Project(
+    val id: String = "",
+    val canonical: String? = null,
+    val name: String? = null,
+)
+
+@Serializable
+data class V2LocationProject(
+    val id: String = "",
+    val directory: String = "",
+    val canonical: String? = null,
+)
+
+@Serializable
+data class V2LocationInfo(
+    val directory: String = "",
+    val project: V2LocationProject? = null,
+)
+
+@Serializable
+data class V2FileEntry(
+    val path: String = "",
+    val type: String = "file",
+)
+
+@Serializable
+data class V2VcsBranch(
+    val current: String? = null,
+    @SerialName("default") val defaultBranch: String? = null,
+)
+
+@Serializable
+data class V2VcsInfo(
+    val provider: String? = null,
+    val branch: V2VcsBranch? = null,
+)
+
+@Serializable
+data class V2FileStatus(
+    val file: String = "",
+    val additions: Long = 0L,
+    val deletions: Long = 0L,
+    val status: String = "",
+)
+
+@Serializable
+data class V2FileDiff(
+    val file: String = "",
+    val patch: String? = null,
+    val additions: Long = 0L,
+    val deletions: Long = 0L,
+    val status: String? = null,
+)
+
+@Serializable
+data class V2McpServer(
+    val name: String = "",
+    val status: JsonElement? = null,
+)
+
+@Serializable
+data class V2Command(
+    val name: String = "",
+    val description: String? = null,
+)
+
+@Serializable
+data class V2Skill(
+    val id: String = "",
+    val name: String = "",
+    val description: String? = null,
+    val path: String? = null,
+)
+
+@Serializable
+data class V2Integration(
+    val id: String = "",
+    val name: String = id,
+    val connections: List<JsonElement> = emptyList(),
+)
+
+@Serializable
+data class V2Form(
+    val id: String = "",
+    @SerialName("sessionID") val sessionId: String = "",
+    val title: String = "",
+    val fields: List<JsonObject> = emptyList(),
+)

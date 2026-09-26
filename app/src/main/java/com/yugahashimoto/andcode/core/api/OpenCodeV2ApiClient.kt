@@ -50,7 +50,11 @@ class OpenCodeV2ApiClient(
 
     suspend fun info(): V2ServerInfo = get("api/info")
 
-    suspend fun sessions(): List<V2Session> = getDataList("api/session")
+    suspend fun sessions(directory: String? = null): List<V2Session> = getDataList("api/session", query("directory" to directory))
+
+    suspend fun projects(): List<V2Project> = getDirectList("api/project")
+
+    suspend fun locationInfo(location: String? = null): V2LocationInfo = getData("api/location", query("location" to location))
 
     suspend fun session(sessionId: String): V2Session = getDataOrDirect("api/session/${encodePath(sessionId)}")
 
@@ -183,6 +187,86 @@ class OpenCodeV2ApiClient(
 
     suspend fun models(): List<V2Model> = getDataList("api/model")
 
+    suspend fun fsEntries(
+        location: String,
+        path: String,
+    ): List<V2FileEntry> = getDataList("api/fs/list", query("location" to location, "path" to path))
+
+    /** Raw bytes as text; the file browser only opens text, binary misuse is on the caller. */
+    suspend fun fsRead(
+        location: String,
+        path: String,
+    ): String =
+        withContext(Dispatchers.IO) {
+            val request =
+                requestBuilder(
+                    "api/fs/read/${path.replace("?", "%3F").replace("#", "%23")}",
+                    query("location" to location),
+                ).get().build()
+            execute(request) { body -> body }
+        }
+
+    suspend fun fsFind(
+        location: String,
+        queryText: String,
+        limit: Int? = null,
+    ): List<V2FileEntry> =
+        getDataList(
+            "api/fs/find",
+            query("location" to location, "query" to queryText, "limit" to limit?.toString()),
+        )
+
+    suspend fun vcsInfo(location: String): V2VcsInfo = getData("api/vcs", query("location" to location))
+
+    suspend fun vcsStatus(location: String): List<V2FileStatus> = getDataList("api/vcs/status", query("location" to location))
+
+    suspend fun vcsDiff(
+        location: String,
+        mode: String,
+        context: Int? = null,
+    ): List<V2FileDiff> =
+        getDataList(
+            "api/vcs/diff",
+            query("location" to location, "mode" to mode, "context" to context?.toString()),
+        )
+
+    suspend fun sessionDiff(sessionId: String): List<V2FileDiff> = getDataList("api/session/${encodePath(sessionId)}/diff")
+
+    suspend fun mcpServers(): List<V2McpServer> = getDataList("api/mcp")
+
+    /** Raw config document (v2 returns per-location entries, not one object). */
+    suspend fun configRaw(): JsonElement =
+        withContext(Dispatchers.IO) {
+            execute(requestBuilder("api/config").get().build()) { body ->
+                json.parseToJsonElement(body)
+            }
+        }
+
+    suspend fun commands(): List<V2Command> = getDataList("api/command")
+
+    suspend fun skills(): List<V2Skill> = getDataList("api/skill")
+
+    suspend fun integrations(): List<V2Integration> = getDataList("api/integration")
+
+    suspend fun forms(sessionId: String): List<V2Form> = getDataList("api/session/${encodePath(sessionId)}/form")
+
+    suspend fun pendingForms(): List<V2Form> = getDataList("api/form")
+
+    suspend fun replyForm(
+        sessionId: String,
+        formId: String,
+        answer: JsonObject,
+    ): Boolean =
+        postUnit(
+            "api/session/${encodePath(sessionId)}/form/${encodePath(formId)}/reply",
+            buildJsonObject { put("answer", answer) },
+        )
+
+    suspend fun cancelForm(
+        sessionId: String,
+        formId: String,
+    ): Boolean = deleteUnit("api/session/${encodePath(sessionId)}/form/${encodePath(formId)}")
+
     fun events(): Flow<V2Event> =
         flow { emitAll(singleEventStream()) }.retryWhen { cause, attempt ->
             val retryable = cause !is OpenCodeApiException || cause.statusCode >= 500
@@ -275,6 +359,30 @@ class OpenCodeV2ApiClient(
                 val root = json.parseToJsonElement(body).jsonObject
                 val data = requireNotNull(root["data"]) { "v2 response is missing data ($path)" }
                 json.decodeFromJsonElement(ListSerializer(serializer()), data)
+            }
+        }
+
+    /** Decodes a `{data: T}` (or `{location, data: T}`) single payload. */
+    private suspend inline fun <reified T> getData(
+        path: String,
+        queryParameters: List<Pair<String, String>> = emptyList(),
+    ): T =
+        withContext(Dispatchers.IO) {
+            execute(requestBuilder(path, queryParameters).get().build()) { body ->
+                val root = json.parseToJsonElement(body).jsonObject
+                val data = requireNotNull(root["data"]) { "v2 response is missing data ($path)" }
+                json.decodeFromJsonElement(serializer(), data)
+            }
+        }
+
+    /** Decodes a bare JSON array body (v2 project/config listings are unenveloped). */
+    private suspend inline fun <reified T> getDirectList(
+        path: String,
+        queryParameters: List<Pair<String, String>> = emptyList(),
+    ): List<T> =
+        withContext(Dispatchers.IO) {
+            execute(requestBuilder(path, queryParameters).get().build()) { body ->
+                json.decodeFromJsonElement(ListSerializer(serializer()), json.parseToJsonElement(body))
             }
         }
 
@@ -424,6 +532,11 @@ class OpenCodeV2ApiClient(
             path.contains("/integration") ||
             path.contains("/oauth/")
     }
+
+    private fun query(vararg parameters: Pair<String, String?>): List<Pair<String, String>> =
+        parameters.mapNotNull { (name, value) ->
+            value?.takeIf { it.isNotBlank() }?.let { name to it }
+        }
 
     private fun encodePath(value: String): String = value.replace("/", "%2F").replace("?", "%3F").replace("#", "%23")
 

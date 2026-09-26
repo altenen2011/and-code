@@ -1,27 +1,54 @@
 package com.yugahashimoto.andcode.runtime.remote
 
+import com.yugahashimoto.andcode.core.api.ConfiguredProvider
+import com.yugahashimoto.andcode.core.api.McpServer
 import com.yugahashimoto.andcode.core.api.OpenCodeAgent
+import com.yugahashimoto.andcode.core.api.OpenCodeCommand
 import com.yugahashimoto.andcode.core.api.OpenCodeEvent
+import com.yugahashimoto.andcode.core.api.OpenCodeFileChange
+import com.yugahashimoto.andcode.core.api.OpenCodeFileContent
+import com.yugahashimoto.andcode.core.api.OpenCodeFileNode
 import com.yugahashimoto.andcode.core.api.OpenCodeHealth
 import com.yugahashimoto.andcode.core.api.OpenCodeMessage
+import com.yugahashimoto.andcode.core.api.OpenCodePathInfo
+import com.yugahashimoto.andcode.core.api.OpenCodeProject
 import com.yugahashimoto.andcode.core.api.OpenCodeSession
+import com.yugahashimoto.andcode.core.api.OpenCodeSkill
 import com.yugahashimoto.andcode.core.api.OpenCodeV2ApiClient
+import com.yugahashimoto.andcode.core.api.OpenCodeVcsInfo
 import com.yugahashimoto.andcode.core.api.PromptRequest
 import com.yugahashimoto.andcode.core.api.ProviderCatalog
+import com.yugahashimoto.andcode.core.api.QuestionRequest
 import com.yugahashimoto.andcode.core.api.V2FileAttachment
 import com.yugahashimoto.andcode.core.api.V2ModelRef
 import com.yugahashimoto.andcode.core.api.toAgent
+import com.yugahashimoto.andcode.core.api.toCommand
+import com.yugahashimoto.andcode.core.api.toConfiguredProvider
 import com.yugahashimoto.andcode.core.api.toEvent
+import com.yugahashimoto.andcode.core.api.toFileChange
+import com.yugahashimoto.andcode.core.api.toFileNode
 import com.yugahashimoto.andcode.core.api.toHealth
+import com.yugahashimoto.andcode.core.api.toMcpServer
 import com.yugahashimoto.andcode.core.api.toMessage
+import com.yugahashimoto.andcode.core.api.toPathInfo
+import com.yugahashimoto.andcode.core.api.toProject
 import com.yugahashimoto.andcode.core.api.toProviderCatalog
+import com.yugahashimoto.andcode.core.api.toQuestion
 import com.yugahashimoto.andcode.core.api.toSession
+import com.yugahashimoto.andcode.core.api.toSkill
+import com.yugahashimoto.andcode.core.api.toVcsInfo
+import com.yugahashimoto.andcode.core.api.v2FileContent
+import com.yugahashimoto.andcode.core.api.v2VcsMode
 import com.yugahashimoto.andcode.data.connection.ConnectionProfile
 import com.yugahashimoto.andcode.runtime.BackendKind
 import com.yugahashimoto.andcode.runtime.OpenCodeBackend
 import com.yugahashimoto.andcode.runtime.PermissionResponse
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * [OpenCodeBackend] served by an OpenCode v2 (2.x) server.
@@ -43,7 +70,7 @@ class RemoteOpenCodeV2Backend(
     override suspend fun health(): OpenCodeHealth = client.info().toHealth()
 
     override suspend fun listSessions(directory: String?): List<OpenCodeSession> =
-        client.sessions().map { it.toSession() }.filter { it.time.archived == null }
+        client.sessions(directory).map { it.toSession() }.filter { it.time.archived == null }
 
     override suspend fun session(sessionId: String): OpenCodeSession = client.session(sessionId).toSession()
 
@@ -57,6 +84,97 @@ class RemoteOpenCodeV2Backend(
     override suspend fun listProviders(): ProviderCatalog = toProviderCatalog(client.providers(), client.models())
 
     override suspend fun listAgents(): List<OpenCodeAgent> = client.agents().map { it.toAgent() }
+
+    override suspend fun listProjects(directory: String?): List<OpenCodeProject> = client.projects().map { it.toProject() }
+
+    override suspend fun currentProject(directory: String?): OpenCodeProject {
+        val project =
+            client.locationInfo(directory).project
+                ?: error("OpenCode v2 server reported no project")
+        return project.toProject()
+    }
+
+    override suspend fun pathInfo(directory: String?): OpenCodePathInfo = client.locationInfo(directory).toPathInfo()
+
+    override suspend fun listFiles(
+        directory: String,
+        path: String,
+    ): List<OpenCodeFileNode> = client.fsEntries(directory, path).map { it.toFileNode() }
+
+    override suspend fun readFile(
+        directory: String,
+        path: String,
+    ): OpenCodeFileContent = v2FileContent(path, client.fsRead(directory, path))
+
+    /** V2 has no file-status route; VCS status is the same git data the v1 route returned. */
+    override suspend fun fileStatus(directory: String): List<OpenCodeFileChange> = vcsStatus(directory)
+
+    override suspend fun findFiles(
+        directory: String,
+        query: String,
+        includeDirectories: Boolean?,
+        type: String?,
+        limit: Int?,
+    ): List<String> = client.fsFind(directory, query, limit).map { it.path }
+
+    override suspend fun vcsInfo(directory: String): OpenCodeVcsInfo = client.vcsInfo(directory).toVcsInfo()
+
+    override suspend fun vcsStatus(directory: String): List<OpenCodeFileChange> = client.vcsStatus(directory).map { it.toFileChange() }
+
+    override suspend fun vcsDiff(
+        directory: String,
+        mode: String,
+        context: Int?,
+    ): List<OpenCodeFileChange> = client.vcsDiff(directory, v2VcsMode(mode), context).map { it.toFileChange() }
+
+    override suspend fun sessionDiff(
+        sessionId: String,
+        directory: String?,
+        messageId: String?,
+    ): List<OpenCodeFileChange> = client.sessionDiff(sessionId).map { it.toFileChange() }
+
+    override suspend fun mcpServers(): List<McpServer> = client.mcpServers().map { it.toMcpServer() }
+
+    override suspend fun config(): JsonElement = client.configRaw()
+
+    override suspend fun configProviders(): List<ConfiguredProvider> = client.integrations().map { it.toConfiguredProvider() }
+
+    override suspend fun commands(): List<OpenCodeCommand> = client.commands().map { it.toCommand() }
+
+    override suspend fun skills(): List<OpenCodeSkill> = client.skills().map { it.toSkill() }
+
+    override suspend fun pendingQuestions(directory: String?): List<QuestionRequest> = client.pendingForms().map { it.toQuestion() }
+
+    /**
+     * Answers a v2 form by replying `{answer: {<first field key>: <first answer>}}`. The form is
+     * resolved through the pending list to recover the session id the v1 signature drops.
+     */
+    override suspend fun answerQuestion(
+        requestId: String,
+        answers: List<List<String>>,
+        directory: String?,
+    ): Boolean {
+        val form =
+            client.pendingForms().firstOrNull { it.id == requestId }
+                ?: error("OpenCode v2 form not found: $requestId")
+        val key =
+            form.fields.firstOrNull()?.get("key") as? JsonPrimitive
+                ?: error("OpenCode v2 form has no answerable field: $requestId")
+        val value = answers.firstOrNull()?.firstOrNull().orEmpty()
+        return client.replyForm(
+            sessionId = form.sessionId,
+            formId = form.id,
+            answer = buildJsonObject { put(key.content, value) },
+        )
+    }
+
+    override suspend fun rejectQuestion(
+        requestId: String,
+        directory: String?,
+    ): Boolean {
+        val form = client.pendingForms().firstOrNull { it.id == requestId } ?: return true
+        return client.cancelForm(form.sessionId, form.id)
+    }
 
     /**
      * V2 keeps agent/model on the session, so the selected agent/model is switched first (only
