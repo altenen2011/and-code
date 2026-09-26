@@ -68,15 +68,21 @@ import com.yugahashimoto.andcode.runtime.local.LocalRuntimeCommandRunner
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeDiagnosticsCollector
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeInstaller
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeManager
+import com.yugahashimoto.andcode.runtime.local.LocalRuntimeManifest
+import com.yugahashimoto.andcode.runtime.local.LocalRuntimeManifestReader
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeMessages
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeProcessLauncher
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeReleaseClient
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeServiceController
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeTarget
+import com.yugahashimoto.andcode.runtime.local.LocalRuntimeUpdateEngine
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeUpdater
+import com.yugahashimoto.andcode.runtime.local.NpmLocalRuntimeUpdateEngine
+import com.yugahashimoto.andcode.runtime.local.NpmOpenCodeReleaseClient
 import com.yugahashimoto.andcode.runtime.local.SystemPromptStore
 import com.yugahashimoto.andcode.runtime.local.VerifiedRuntimeDownloader
 import com.yugahashimoto.andcode.runtime.local.applyOpenCodeSystemPrompt
+import com.yugahashimoto.andcode.runtime.local.verifiedUpdateDownload
 import com.yugahashimoto.andcode.startup.CatalogReconcileInitializer
 import com.yugahashimoto.andcode.startup.RuntimeAutoStartInitializer
 import com.yugahashimoto.andcode.startup.RuntimeAutoStartTrigger
@@ -294,7 +300,12 @@ class AndCodeApplication : Application() {
                 githubToken = { settings.githubToken },
                 beforeStart = { installed ->
                     runCatching { providerCredentials.syncToRuntime(installed.rootfs) }
-                    runCatching { customProviders.syncToRuntime(installed.rootfs) }
+                    runCatching {
+                        customProviders.syncToRuntime(
+                            installed.rootfs,
+                            useV2Providers = installed.metadata.version.startsWith("2"),
+                        )
+                    }
                     runCatching {
                         GitCredentialHelper(installed.rootfs) { settings.githubToken }.let { helper ->
                             if (settings.githubToken.isNullOrBlank()) helper.remove() else helper.install()
@@ -367,15 +378,7 @@ class AndCodeApplication : Application() {
             LocalRuntimeUpdater(
                 runtimeDirectory = runtimeDirectory,
                 abi = abi,
-                downloadAsset = { asset, destination, progress ->
-                    verifiedDownloader.download(
-                        url = asset.url,
-                        destination = destination,
-                        expectedSha256 = asset.sha256,
-                        expectedSizeBytes = asset.sizeBytes,
-                        onProgress = progress,
-                    )
-                },
+                downloadAsset = verifiedUpdateDownload(verifiedDownloader),
                 candidateVersionProvider = { candidate ->
                     val result =
                         commandRunner.runShell(
@@ -391,11 +394,18 @@ class AndCodeApplication : Application() {
                 accessCoordinator = accessCoordinator,
                 messages = runtimeMessages,
             )
-        val updateEngine =
-            DefaultLocalRuntimeUpdateEngine(
-                releaseClient = LocalRuntimeReleaseClient(httpClient),
-                updater = updater,
-            )
+        val updateEngine: LocalRuntimeUpdateEngine =
+            if (isNpmUpdateChannel(this@AndCodeApplication)) {
+                NpmLocalRuntimeUpdateEngine(
+                    releaseClient = NpmOpenCodeReleaseClient(httpClient),
+                    updater = updater,
+                )
+            } else {
+                DefaultLocalRuntimeUpdateEngine(
+                    releaseClient = LocalRuntimeReleaseClient(httpClient),
+                    updater = updater,
+                )
+            }
         localRuntimeManager =
             LocalRuntimeManager(
                 runtimeDirectory = runtimeDirectory,
@@ -684,3 +694,9 @@ class AndCodeApplication : Application() {
         private const val SESSIONS_LEASE_GRACE_MILLIS = 60_000L
     }
 }
+
+/** True when the bundled manifest pins the npm channel (OpenCode v2 line). */
+private fun isNpmUpdateChannel(context: Context): Boolean =
+    runCatching {
+        LocalRuntimeManifestReader(context).read().openCodeChannel
+    }.getOrDefault(LocalRuntimeManifest.CHANNEL_GITHUB) == LocalRuntimeManifest.CHANNEL_NPM

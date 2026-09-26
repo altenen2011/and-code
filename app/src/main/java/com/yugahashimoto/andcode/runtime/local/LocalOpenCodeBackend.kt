@@ -30,18 +30,27 @@ import com.yugahashimoto.andcode.runtime.BackendKind
 import com.yugahashimoto.andcode.runtime.OpenCodeBackend
 import com.yugahashimoto.andcode.runtime.PermissionResponse
 import com.yugahashimoto.andcode.runtime.remote.RemoteOpenCodeBackend
+import com.yugahashimoto.andcode.runtime.remote.RemoteOpenCodeV2Backend
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 class LocalOpenCodeBackend(
     private val portProvider: () -> Int?,
-    private val backendFactory: (ConnectionProfile) -> RemoteOpenCodeBackend = { profile ->
-        RemoteOpenCodeBackend(profile)
+    private val useV2: () -> Boolean = { false },
+    private val passwordProvider: () -> String? = { null },
+    private val backendFactory: (ConnectionProfile) -> OpenCodeBackend = { profile ->
+        if (useV2()) RemoteOpenCodeV2Backend(profile) else RemoteOpenCodeBackend(profile)
     },
 ) : OpenCodeBackend {
-    constructor(runtimeManager: LocalRuntimeManager) : this(
+    constructor(
+        runtimeManager: LocalRuntimeManager,
+        useV2: () -> Boolean = { false },
+        passwordProvider: () -> String? = { null },
+    ) : this(
         portProvider = runtimeManager::installedPort,
+        useV2 = useV2,
+        passwordProvider = passwordProvider,
     )
 
     override val id: String = "local-android"
@@ -52,7 +61,7 @@ class LocalOpenCodeBackend(
     private var cached: CachedDelegate? = null
     private val lock = Any()
 
-    internal fun delegate(): RemoteOpenCodeBackend {
+    internal fun delegate(): OpenCodeBackend {
         val port =
             portProvider()
                 ?: error("Android local OpenCode runtime is not installed")
@@ -67,6 +76,7 @@ class LocalOpenCodeBackend(
                         name = displayName,
                         baseUrl = "http://127.0.0.1:$port/",
                         username = "opencode",
+                        password = passwordProvider(),
                         allowInsecureLan = true,
                     ),
                 )
@@ -254,6 +264,6 @@ class LocalOpenCodeBackend(
 
     private data class CachedDelegate(
         val port: Int,
-        val backend: RemoteOpenCodeBackend,
+        val backend: OpenCodeBackend,
     )
 }

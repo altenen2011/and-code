@@ -1,0 +1,373 @@
+package com.yugahashimoto.andcode.runtime.remote
+
+import com.yugahashimoto.andcode.core.api.PromptAttachment
+import com.yugahashimoto.andcode.core.api.PromptRequest
+import com.yugahashimoto.andcode.data.connection.ConnectionProfile
+import com.yugahashimoto.andcode.runtime.PermissionResponse
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+class RemoteOpenCodeV2BackendTest {
+    private lateinit var server: MockWebServer
+    private lateinit var backend: RemoteOpenCodeV2Backend
+
+    @Before
+    fun setUp() {
+        server = MockWebServer()
+        server.start()
+        backend =
+            RemoteOpenCodeV2Backend(
+                ConnectionProfile(
+                    id = "mac",
+                    name = "Mac mini",
+                    baseUrl = server.url("/").toString(),
+                    username = "opencode",
+                    password = "pw",
+                    allowInsecureLan = true,
+                ),
+            )
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    @Test
+    fun `health maps server info`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{"version":"2.0.18","pid":7}"""))
+
+            val health = backend.health()
+
+            assertTrue(health.healthy)
+            assertEquals("2.0.18", health.version)
+            assertEquals("/api/info", server.takeRequest().path)
+        }
+
+    @Test
+    fun `list sessions hides archived entries`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":[{"id":"ses_1","title":"A","time":{"created":1,"updated":2}},{"id":"ses_2","title":"B","time":{"created":1,"updated":2,"archived":3}}],"cursor":{}}""",
+                ),
+            )
+
+            val sessions = backend.listSessions()
+
+            assertEquals(listOf("ses_1"), sessions.map { it.id })
+        }
+
+    @Test
+    fun `send switches differing agent and model before prompting`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"id":"ses_1","agent":"build","model":{"id":"m","providerID":"p"},"time":{"created":1,"updated":2}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+            server.enqueue(MockResponse().setBody("""{}"""))
+            server.enqueue(MockResponse().setBody("""{"data":{"id":"msg_1","sessionID":"ses_1"}}"""))
+
+            backend.sendMessage(
+                "ses_1",
+                PromptRequest(text = "Hello", providerId = "p", modelId = "m2", agent = "plan"),
+            )
+
+            val requests = List(4) { server.takeRequest() }
+            assertEquals(
+                listOf(
+                    "/api/session/ses_1",
+                    "/api/session/ses_1/agent",
+                    "/api/session/ses_1/model",
+                    "/api/session/ses_1/prompt",
+                ),
+                requests.map { it.path },
+            )
+            assertTrue(requests[1].body.readUtf8().contains("plan"))
+            assertTrue(requests[2].body.readUtf8().contains("m2"))
+            assertTrue(requests[3].body.readUtf8().contains("Hello"))
+        }
+
+    @Test
+    fun `send skips switches when session already matches`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"id":"ses_1","agent":"plan","model":{"id":"m2","providerID":"p"},"time":{"created":1,"updated":2}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{"data":{"id":"msg_1","sessionID":"ses_1"}}"""))
+
+            backend.sendMessage(
+                "ses_1",
+                PromptRequest(text = "Hello", providerId = "p", modelId = "m2", agent = "plan"),
+            )
+
+            assertEquals("/api/session/ses_1", server.takeRequest().path)
+            val prompt = server.takeRequest()
+            assertEquals("/api/session/ses_1/prompt", prompt.path)
+            assertTrue(prompt.body.readUtf8().contains("Hello"))
+        }
+
+    @Test
+    fun `send forwards attachments as file mentions`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"id":"ses_1","time":{"created":1,"updated":2}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{"data":{"id":"msg_1","sessionID":"ses_1"}}"""))
+
+            backend.sendMessage(
+                "ses_1",
+                PromptRequest(
+                    text = "Look",
+                    attachments =
+                        listOf(
+                            PromptAttachment(
+                                filename = "a.png",
+                                mime = "image/png",
+                                url = "file:///tmp/a.png",
+                            ),
+                        ),
+                ),
+            )
+
+            server.takeRequest()
+            val prompt = server.takeRequest()
+            val body = prompt.body.readUtf8()
+            assertTrue(body.contains("file:///tmp/a.png"))
+            assertTrue(body.contains("a.png"))
+        }
+
+    @Test
+    fun `rename patches then reads back the session`() =
+        runBlocking {
+            server.enqueue(MockResponse().setResponseCode(204))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"id":"ses_1","title":"New","time":{"created":1790440217782,"updated":1790440217783}}""",
+                ),
+            )
+
+            val session = backend.renameSession("ses_1", "New")
+
+            assertEquals("New", session.title)
+            assertEquals(1790440217782L, session.time.created)
+            assertEquals("/api/session/ses_1", server.takePath())
+            assertEquals("/api/session/ses_1", server.takePath())
+        }
+
+    @Test
+    fun `permission answers map remember to always`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            val ok = backend.respondToPermission("ses_1", "per_1", PermissionResponse.ONCE, remember = true)
+
+            assertTrue(ok)
+            val request = server.takeRequest()
+            assertEquals("/api/session/ses_1/permission/per_1/reply", request.path)
+            assertTrue(request.body.readUtf8().contains("always"))
+        }
+
+    @Test
+    fun `messages map roles from kinds`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":[{"id":"msg_1","sessionID":"ses_1","type":"user","text":"hi"},{"id":"msg_2","sessionID":"ses_1","type":"assistant","text":"yo"}],"cursor":{}}""",
+                ),
+            )
+
+            val messages = backend.listMessages("ses_1")
+
+            assertEquals(listOf("user", "assistant"), messages.map { it.info.role })
+            assertEquals("hi", messages[0].text)
+        }
+
+    @Test
+    fun `messages sort chronologically regardless of server order`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":[{"id":"msg_2","sessionID":"ses_1","type":"assistant","text":"yo","time":{"created":2000}},{"id":"msg_1","sessionID":"ses_1","type":"user","text":"hi","time":{"created":1000}}],"cursor":{}}""",
+                ),
+            )
+
+            val messages = backend.listMessages("ses_1")
+
+            assertEquals(listOf("msg_1", "msg_2"), messages.map { it.info.id })
+        }
+
+    @Test
+    fun `providers merge integrations with connections`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{"location":{},"data":[]}"""))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"m1","providerID":"opencode","modelID":"m1"}]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"opencode","name":"OpenCode","methods":[],"connections":[{"type":"credential","id":"c1"}]}]}""",
+                ),
+            )
+
+            val catalog = backend.listProviders()
+
+            assertEquals(listOf("opencode"), catalog.all.map { it.id })
+            assertEquals(listOf("opencode"), catalog.connected)
+        }
+
+    @Test
+    fun `projects files and vcs map from location routes`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""[{"id":"prj_1","canonical":"repo","name":"Repo"}]"""))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"path":"src/Main.kt","type":"file"}]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"provider":"git","branch":{"current":"main","default":"main"}}}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"file":"a.kt","additions":3,"deletions":1,"status":"modified"}]}""",
+                ),
+            )
+
+            val projects = backend.listProjects()
+            val files = backend.listFiles("/ws", ".")
+            val vcs = backend.vcsInfo("/ws")
+            val status = backend.vcsStatus("/ws")
+
+            assertEquals("prj_1", projects[0].id)
+            assertEquals("projects request", "/api/project", server.takePath())
+            assertEquals("Main.kt", files[0].name)
+            assertEquals("/ws/src/Main.kt", files[0].absolute)
+            val fsRequest = server.takeRequest()
+            assertEquals("fs list request", "/api/fs/list", fsRequest.path?.substringBefore("?"))
+            assertEquals("location bracket", "/ws", fsRequest.requestUrl?.queryParameter("location[directory]"))
+            assertEquals("main", vcs.branch)
+            assertEquals("vcs request", "/api/vcs", server.takePath())
+            assertEquals("a.kt", status[0].file)
+            assertEquals("vcs status request", "/api/vcs/status", server.takePath())
+        }
+
+    @Test
+    fun `answers resolve the form then reply with first field key`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"frm_1","sessionID":"ses_1","title":"Pick one","fields":[{"key":"choice","type":"string"}]}]}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            val ok = backend.answerQuestion("frm_1", listOf(listOf("yes")), null)
+
+            assertTrue("answer should succeed", ok)
+            assertEquals("pending forms request", "/api/form", server.takePath())
+            val reply = server.takeRequest()
+            assertEquals("form reply request", "/api/session/ses_1/form/frm_1/reply", reply.path)
+            val replyBody = reply.body.readUtf8()
+            assertTrue("reply carries field key", replyBody.contains("choice"))
+            assertTrue("reply carries answer", replyBody.contains("yes"))
+        }
+
+    @Test
+    fun `rejecting a vanished form succeeds without a call`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{"location":{},"data":[]}"""))
+
+            val ok = backend.rejectQuestion("frm_gone", null)
+
+            assertTrue(ok)
+            assertEquals("/api/form", server.takePath())
+            assertEquals(1, server.requestCount)
+        }
+
+    @Test
+    fun `auth methods map key and oauth integrations`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":[{"id":"acme","name":"Acme","methods":[{"type":"key"},{"type":"oauth","id":"m1","label":"Sign in","form":[{"key":"team","title":"Team","type":"string"}]},{"type":"env"}]}]}""",
+                ),
+            )
+
+            val methods = backend.providerAuthMethods()["acme"].orEmpty()
+
+            assertEquals(listOf("api", "oauth"), methods.map { it.type })
+            assertEquals("team", methods[1].prompts.single().key)
+            assertEquals("/api/integration", server.takePath())
+        }
+
+    @Test
+    fun `oauth begin stores the attempt for completion`() =
+        runBlocking {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"id":"acme","name":"Acme","methods":[{"type":"oauth","id":"m1","label":"Sign in"}],"connections":[]}}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":{"attemptID":"att_1","url":"https://auth.example/start","mode":"code"}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            val authorization = backend.authorizeProvider("acme", 0, mapOf("team" to "t1"))
+            val completed = backend.completeProviderOAuth("acme", 0, "code-9")
+
+            assertEquals("https://auth.example/start", authorization.url)
+            assertEquals("code", authorization.method)
+            assertTrue(completed)
+            server.takePath()
+            val begin = server.takeRequest()
+            assertEquals("/api/integration/acme/connect/oauth", begin.path)
+            assertTrue(begin.body.readUtf8().contains("m1"))
+            val complete = server.takeRequest()
+            assertEquals("/api/integration/acme/connect/oauth/att_1/complete", complete.path)
+            assertTrue(complete.body.readUtf8().contains("code-9"))
+        }
+
+    @Test
+    fun `api key connect and credential removal use integration routes`() =
+        runBlocking {
+            server.enqueue(MockResponse().setBody("""{}"""))
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"location":{},"data":{"id":"acme","methods":[],"connections":[{"type":"credential","id":"cred_1"},{"type":"env","name":"X"}]}}""",
+                ),
+            )
+            server.enqueue(MockResponse().setBody("""{}"""))
+
+            assertTrue(backend.setProviderApiKey("acme", "sk-1", emptyMap()))
+            val connect = server.takeRequest()
+            assertEquals("/api/integration/acme/connect/key", connect.path)
+            assertTrue(connect.body.readUtf8().contains("sk-1"))
+
+            assertTrue(backend.removeProviderAuth("acme"))
+            server.takePath()
+            assertEquals("/api/credential/cred_1", server.takeRequest().path)
+        }
+
+    private fun MockWebServer.takePath(): String = takeRequest().path?.substringBefore("?").orEmpty()
+}

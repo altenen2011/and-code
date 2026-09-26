@@ -1,5 +1,6 @@
 package com.yugahashimoto.andcode.di
 
+import android.content.Context
 import android.os.Build
 import com.yugahashimoto.andcode.AndCodeApplication
 import com.yugahashimoto.andcode.core.api.GitHubApiClient
@@ -25,13 +26,19 @@ import com.yugahashimoto.andcode.runtime.local.LocalRuntimeAccessCoordinator
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeCommandRunner
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeInstaller
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeManager
+import com.yugahashimoto.andcode.runtime.local.LocalRuntimeManifest
+import com.yugahashimoto.andcode.runtime.local.LocalRuntimeManifestReader
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeMessages
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeProcessLauncher
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeReleaseClient
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeServiceController
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeTarget
+import com.yugahashimoto.andcode.runtime.local.LocalRuntimeUpdateEngine
 import com.yugahashimoto.andcode.runtime.local.LocalRuntimeUpdater
+import com.yugahashimoto.andcode.runtime.local.NpmLocalRuntimeUpdateEngine
+import com.yugahashimoto.andcode.runtime.local.NpmOpenCodeReleaseClient
 import com.yugahashimoto.andcode.runtime.local.VerifiedRuntimeDownloader
+import com.yugahashimoto.andcode.runtime.local.verifiedUpdateDownload
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -93,7 +100,12 @@ val appModule =
                 githubToken = { settings.githubToken },
                 beforeStart = { installed ->
                     runCatching { providerCredentials.syncToRuntime(installed.rootfs) }
-                    runCatching { customProviders.syncToRuntime(installed.rootfs) }
+                    runCatching {
+                        customProviders.syncToRuntime(
+                            installed.rootfs,
+                            useV2Providers = installed.metadata.version.startsWith("2"),
+                        )
+                    }
                     runCatching {
                         GitCredentialHelper(installed.rootfs) { settings.githubToken }.let { helper ->
                             if (settings.githubToken.isNullOrBlank()) helper.remove() else helper.install()
@@ -124,15 +136,7 @@ val appModule =
                 LocalRuntimeUpdater(
                     runtimeDirectory = runtimeDirectory,
                     abi = abi,
-                    downloadAsset = { asset, destination, progress ->
-                        verifiedDownloader.download(
-                            url = asset.url,
-                            destination = destination,
-                            expectedSha256 = asset.sha256,
-                            expectedSizeBytes = asset.sizeBytes,
-                            onProgress = progress,
-                        )
-                    },
+                    downloadAsset = verifiedUpdateDownload(verifiedDownloader),
                     candidateVersionProvider = { candidate ->
                         val result =
                             commandRunner.runShell(
@@ -148,11 +152,18 @@ val appModule =
                     accessCoordinator = get(),
                     messages = get(),
                 )
-            val updateEngine =
-                DefaultLocalRuntimeUpdateEngine(
-                    releaseClient = LocalRuntimeReleaseClient(httpClient),
-                    updater = updater,
-                )
+            val updateEngine: LocalRuntimeUpdateEngine =
+                if (isNpmUpdateChannel(androidContext())) {
+                    NpmLocalRuntimeUpdateEngine(
+                        releaseClient = NpmOpenCodeReleaseClient(httpClient),
+                        updater = updater,
+                    )
+                } else {
+                    DefaultLocalRuntimeUpdateEngine(
+                        releaseClient = LocalRuntimeReleaseClient(httpClient),
+                        updater = updater,
+                    )
+                }
             LocalRuntimeManager(
                 runtimeDirectory = runtimeDirectory,
                 abi = abi,
@@ -216,3 +227,9 @@ val appModule =
             )
         }
     }
+
+/** True when the bundled manifest pins the npm channel (OpenCode v2 line). */
+private fun isNpmUpdateChannel(context: Context): Boolean =
+    runCatching {
+        LocalRuntimeManifestReader(context).read().openCodeChannel
+    }.getOrDefault(LocalRuntimeManifest.CHANNEL_GITHUB) == LocalRuntimeManifest.CHANNEL_NPM

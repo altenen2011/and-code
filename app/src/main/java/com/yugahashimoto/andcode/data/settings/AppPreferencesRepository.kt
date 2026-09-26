@@ -14,6 +14,7 @@ data class AppPreferences(
     val providerId: String? = null,
     val modelId: String? = null,
     val agentId: String? = null,
+    val variant: String? = null,
     val ttsEnabled: Boolean = true,
     val ttsProvider: String = "android",
     val ttsAndroidEngine: String? = null,
@@ -64,6 +65,7 @@ class AppPreferencesRepository(
                 providerId = settings.selectedProviderId,
                 modelId = settings.selectedModelId,
                 agentId = settings.selectedAgentId,
+                variant = settings.selectedVariant,
                 ttsEnabled = settings.ttsEnabled,
                 ttsProvider = settings.ttsProvider,
                 ttsAndroidEngine = settings.ttsAndroidEngine,
@@ -125,6 +127,11 @@ class AppPreferencesRepository(
     fun selectAgent(agentId: String?) {
         settings.selectedAgentId = agentId
         mutableState.update { it.copy(agentId = agentId) }
+    }
+
+    fun selectVariant(variant: String?) {
+        settings.selectedVariant = variant
+        mutableState.update { it.copy(variant = variant) }
     }
 
     fun reconcile(

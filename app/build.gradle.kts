@@ -66,6 +66,44 @@ val prepareOpenCodeRuntimeNativeLibs =
         )
     }
 
+val generatedPortableRuntime = rootProject.layout.buildDirectory.dir("generated/portable-runtime")
+
+// Best-effort offline bundle: if the builder fails (e.g. the Alpine CDN serves an index
+// that does not match its own packages mid-rollout), the build stays green and phone setup
+// falls back to downloading. Pass -Pandcode.requirePortableAssets=true to fail release
+// builds instead. Only fully hash-verified bytes ever land in a bundle.
+val requirePortableAssets =
+    (System.getenv("ANDCODE_REQUIRE_PORTABLE_ASSETS") ?: findProperty("andcode.requirePortableAssets")?.toString())
+        .toBoolean()
+
+val preparePortableRuntime =
+    tasks.register<Exec>("preparePortableRuntime") {
+        inputs.file(repoRoot.resolve("scripts/prepare_portable_runtime.py"))
+        inputs.file(repoRoot.resolve("app/src/main/assets/local-runtime-manifest.json"))
+        outputs.dir(generatedPortableRuntime)
+        isIgnoreExitValue = !requirePortableAssets
+        doFirst {
+            // A failed run must not leave half-built staging for lint/merge to choke on.
+            generatedPortableRuntime.get().asFile.deleteRecursively()
+        }
+        commandLine(
+            "python3",
+            repoRoot.resolve("scripts/prepare_portable_runtime.py").absolutePath,
+            "--manifest",
+            repoRoot.resolve("app/src/main/assets/local-runtime-manifest.json").absolutePath,
+            "--output-dir",
+            generatedPortableRuntime.get().asFile.absolutePath,
+            "--abis",
+            "arm64-v8a,x86_64",
+        )
+        doLast {
+            val produced = generatedPortableRuntime.get().asFile.listFiles()?.toList().orEmpty()
+            if (produced.isEmpty()) {
+                logger.warn("Portable runtime bundle unavailable; on-device setup will download instead.")
+            }
+        }
+    }
+
 val releaseStoreFile =
     (
         System.getenv("AND_CODE_STORE_FILE")
@@ -221,6 +259,7 @@ android {
     }
     sourceSets {
         getByName("main").jniLibs.srcDir(generatedRuntimeJni)
+        getByName("main").assets.srcDir(generatedPortableRuntime)
     }
     packaging {
         resources {
@@ -237,6 +276,7 @@ android {
 
 tasks.named("preBuild").configure {
     dependsOn(prepareOpenCodeRuntimeNativeLibs)
+    dependsOn(preparePortableRuntime)
 }
 
 dependencies {
@@ -374,5 +414,15 @@ tasks.register("generateNoticeAggregate") {
                 sections.joinToString("\n"),
         )
         println("Wrote ${sections.size} embedded NOTICE file(s) out of ${artifacts.size} artifacts to ${outputFile.path}")
+    }
+}
+
+// Show full failure stacks in CI logs while the OpenCode v2 migration lands; the new
+// client/backend tests iterate faster when assertion values are visible.
+tasks.withType<Test> {
+    testLogging {
+        showExceptions = true
+        showStackTraces = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }

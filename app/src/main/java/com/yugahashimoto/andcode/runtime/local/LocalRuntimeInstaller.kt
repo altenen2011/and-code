@@ -12,6 +12,8 @@ import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
+import java.security.SecureRandom
 
 class LocalRuntimeInstaller(
     private val context: Context,
@@ -96,40 +98,73 @@ class LocalRuntimeInstaller(
             staging.mkdirs()
 
             try {
-                val alpineArchive = File(cache, "alpine-${manifest.alpineVersion}-$abi.tar.gz")
-                download(
-                    architecture.alpineUrl,
-                    alpineArchive,
-                    architecture.alpineSha256,
-                    0.05f,
-                    0.22f,
-                    context.getString(R.string.install_step_downloading_alpine),
-                    onShared,
-                )
                 val withOpenCode = LocalAgent.OPEN_CODE in requestedAgents
-                val openCodeArchive =
-                    File(cache, "opencode-${manifest.openCodeVersion}-$abi.tar.gz").takeIf { withOpenCode }?.also { archive ->
+                val rootfs = File(staging, "rootfs").apply { mkdirs() }
+                // A portable bundle baked into the APK provisions fully offline; otherwise fall
+                // back to the classic download-everything flow.
+                val offline = extractPortableBundle(abi, rootfs, manifest, architecture, cache, onShared)
+                val openCodeBinary: File? =
+                    if (offline) {
+                        if (withOpenCode) {
+                            File(rootfs, "usr/local/bin/opencode").also { binary ->
+                                require(binary.isFile) { "Portable bundle is missing the opencode binary" }
+                                require(binary.setExecutable(true, false) || binary.canExecute()) {
+                                    "Unable to mark OpenCode executable"
+                                }
+                            }
+                        } else {
+                            File(rootfs, "usr/local/bin/opencode").takeIf { it.exists() }?.delete()
+                            null
+                        }
+                    } else {
+                        val alpineArchive = File(cache, "alpine-${manifest.alpineVersion}-$abi.tar.gz")
                         download(
-                            architecture.openCodeUrl,
-                            archive,
-                            architecture.openCodeSha256,
-                            0.24f,
-                            0.72f,
-                            context.getString(R.string.install_step_downloading_opencode),
+                            architecture.alpineUrl,
+                            alpineArchive,
+                            architecture.alpineSha256,
+                            0.05f,
+                            0.22f,
+                            context.getString(R.string.install_step_downloading_alpine),
                             onShared,
                         )
-                    }
+                        val openCodeArchive =
+                            File(cache, "opencode-${manifest.openCodeVersion}-$abi.tar.gz").takeIf { withOpenCode }?.also { archive ->
+                                if (manifest.openCodeChannel == LocalRuntimeManifest.CHANNEL_NPM) {
+                                    downloadIntegrity(
+                                        requireNotNull(architecture.npmTarballUrl) {
+                                            "npm channel manifest is missing the tarball URL for $abi"
+                                        },
+                                        archive,
+                                        requireNotNull(architecture.npmIntegrity) {
+                                            "npm channel manifest is missing the integrity hash for $abi"
+                                        },
+                                        0.24f,
+                                        0.72f,
+                                        context.getString(R.string.install_step_downloading_opencode),
+                                        onShared,
+                                    )
+                                } else {
+                                    download(
+                                        architecture.openCodeUrl,
+                                        archive,
+                                        architecture.openCodeSha256,
+                                        0.24f,
+                                        0.72f,
+                                        context.getString(R.string.install_step_downloading_opencode),
+                                        onShared,
+                                    )
+                                }
+                            }
 
-                val rootfs = File(staging, "rootfs").apply { mkdirs() }
-                onShared(0.75f, context.getString(R.string.install_step_extracting_linux_env))
-                alpineArchive.inputStream().use { RuntimeArchive.extractTarGz(it, rootfs) }
+                        onShared(0.75f, context.getString(R.string.install_step_extracting_linux_env))
+                        alpineArchive.inputStream().use { RuntimeArchive.extractTarGz(it, rootfs) }
 
-                val openCodeBinary =
-                    openCodeArchive?.let { archive ->
-                        onShared(0.85f, context.getString(R.string.install_step_extracting_opencode))
-                        extractOpenCode(archive, staging, rootfs)
+                        openCodeArchive?.let { archive ->
+                            onShared(0.85f, context.getString(R.string.install_step_extracting_opencode))
+                            extractOpenCode(archive, staging, rootfs)
+                        }
                     }
-                configureRootfs(rootfs, commandSuite)
+                configureRootfs(rootfs, commandSuite, useV2Config = manifest.openCodeVersion.startsWith("2"))
                 val antigravityRootfs =
                     if (LocalAgent.ANTIGRAVITY in requestedAgents) {
                         onAntigravity(0.90f, context.getString(R.string.install_step_preparing_antigravity_rootfs))
@@ -149,8 +184,8 @@ class LocalRuntimeInstaller(
                     // to agy's Debian tool runner as well. The scripts still fail closed when adb
                     // or Pillow is not installed; they are never silently replaced by a fork.
                     installAndroidHelperScripts(antigravityRootfs)
-                    provisionBrowserMcp(antigravityRootfs)
-                    provisionScheduleMcp(antigravityRootfs)
+                    provisionBrowserMcp(antigravityRootfs, useV2Config = manifest.openCodeVersion.startsWith("2"))
+                    provisionScheduleMcp(antigravityRootfs, useV2Config = manifest.openCodeVersion.startsWith("2"))
                 }
                 // Credentials and agent config live under /root inside the rootfs. Activation swaps
                 // the whole environment directory, so without this the user is signed out of every
@@ -170,11 +205,14 @@ class LocalRuntimeInstaller(
                 installPackages(
                     rootfs = rootfs,
                     suite = commandSuite,
+                    // A portable bundle already carries the required set: only refresh
+                    // certificates locally, and still fetch the optional tools on demand.
                     packages =
-                        if (includeFullDevelopmentTools) {
-                            REQUIRED_RUNTIME_PACKAGES + OPTIONAL_DEVELOPMENT_PACKAGES
-                        } else {
-                            REQUIRED_RUNTIME_PACKAGES
+                        when {
+                            offline && includeFullDevelopmentTools -> OPTIONAL_DEVELOPMENT_PACKAGES
+                            offline -> emptyList()
+                            includeFullDevelopmentTools -> REQUIRED_RUNTIME_PACKAGES + OPTIONAL_DEVELOPMENT_PACKAGES
+                            else -> REQUIRED_RUNTIME_PACKAGES
                         },
                 )
                 if (LocalAgent.CLAUDE_CODE in requestedAgents) {
@@ -210,6 +248,7 @@ class LocalRuntimeInstaller(
                         components = requestedAgents.map(LocalAgent::id).toSet(),
                         fullDevelopmentToolsInstalled = includeFullDevelopmentTools,
                         fullDebianDevelopmentToolsInstalled = includeFullDevelopmentTools && antigravityRootfs != null,
+                        serverPassword = generateServerPassword(),
                     )
                 File(staging, METADATA_FILE).writeText(json.encodeToString(metadata))
                 onShared(0.96f, context.getString(R.string.install_step_activating_runtime))
@@ -430,6 +469,94 @@ class LocalRuntimeInstaller(
         onProgress(endProgress, label)
     }
 
+    /**
+     * npm-channel counterpart of [download]: verifies the registry `sha512` integrity instead of
+     * a SHA-256 hex digest. Used for OpenCode v2 platform tarballs.
+     */
+    private suspend fun downloadIntegrity(
+        url: String,
+        destination: File,
+        integrity: String,
+        startProgress: Float,
+        endProgress: Float,
+        label: String,
+        onProgress: (Float?, String) -> Unit,
+    ) {
+        if (destination.isFile) {
+            runCatching { RuntimeArchive.verifyNpmIntegrity(destination, integrity) }
+                .onSuccess {
+                    onProgress(endProgress, label)
+                    return
+                }
+            destination.delete()
+        }
+        downloader.download(
+            url = url,
+            destination = destination,
+            onProgress = { fraction ->
+                onProgress(
+                    fraction?.let {
+                        startProgress + (endProgress - startProgress) * it.coerceIn(0f, 1f)
+                    },
+                    label,
+                )
+            },
+            verify = { file -> RuntimeArchive.verifyNpmIntegrity(file, integrity) },
+        )
+        onProgress(endProgress, label)
+    }
+
+    /**
+     * Provisions the rootfs from the portable bundle baked into the APK instead of downloading
+     * anything. Returns false when no bundle is shipped for [abi] so setup falls back to the
+     * online flow. A bundle whose pins disagree with [manifest] fails fast rather than
+     * installing mismatched versions.
+     */
+    private suspend fun extractPortableBundle(
+        abi: String,
+        rootfs: File,
+        manifest: LocalRuntimeManifest,
+        architecture: LocalRuntimeArchitecture,
+        cache: File,
+        onShared: (Float?, String) -> Unit,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val tmp = File(cache, "portable-$abi.tar.gz")
+            try {
+                context.assets.open("portable-rootfs-$abi.tar.gz").use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+            } catch (error: IOException) {
+                tmp.delete()
+                return@withContext false
+            }
+            try {
+                onShared(0.30f, context.getString(R.string.install_step_extracting_linux_env))
+                verifyPortableBundle(tmp, manifest, architecture, abi)
+                tmp.inputStream().use { RuntimeArchive.extractTarGz(it, rootfs) }
+                File(rootfs, "bundle-manifest.json").delete()
+                true
+            } finally {
+                tmp.delete()
+            }
+        }
+
+    private fun verifyPortableBundle(
+        bundle: File,
+        manifest: LocalRuntimeManifest,
+        architecture: LocalRuntimeArchitecture,
+        abi: String,
+    ) {
+        val payload =
+            org.apache.commons.compress.archivers.tar.TarFile(bundle).use { tar ->
+                val entry =
+                    tar.entries.firstOrNull { it.name == "bundle-manifest.json" }
+                        ?: error("Portable bundle is missing its manifest")
+                tar.getInputStream(entry).bufferedReader().use { it.readText() }
+            }
+        verifyPortableBundleManifest(JSONObject(payload), manifest, architecture, abi)
+    }
+
     private fun installPackages(
         rootfs: File,
         suite: EmbeddedCommandSuite.Paths,
@@ -461,8 +588,14 @@ class LocalRuntimeInstaller(
                 "/bin/sh",
                 "-lc",
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
-                    "/sbin/apk --cache-dir /var/cache/apk add ${packages.joinToString(" ")} && " +
-                    "/usr/sbin/update-ca-certificates",
+                    if (packages.isEmpty()) {
+                        // Portable bundles ship packages pre-installed; only the certificate
+                        // bundle needs rebuilding inside the fresh rootfs, fully offline.
+                        "/usr/sbin/update-ca-certificates"
+                    } else {
+                        "/sbin/apk --cache-dir /var/cache/apk add ${packages.joinToString(" ")} && " +
+                            "/usr/sbin/update-ca-certificates"
+                    },
             )
         val installLog =
             File(runtimeDirectory, "logs/tool-install.log").apply {
@@ -494,6 +627,7 @@ class LocalRuntimeInstaller(
     private fun configureRootfs(
         rootfs: File,
         suite: EmbeddedCommandSuite.Paths,
+        useV2Config: Boolean = false,
     ) {
         File(rootfs, "root").mkdirs()
         File(rootfs, "tmp").apply {
@@ -526,8 +660,8 @@ class LocalRuntimeInstaller(
             Os.symlink("libapk.so.3.0.0", libApk.absolutePath)
         }
         installAndroidHelperScripts(rootfs)
-        provisionBrowserMcp(rootfs)
-        provisionScheduleMcp(rootfs)
+        provisionBrowserMcp(rootfs, useV2Config)
+        provisionScheduleMcp(rootfs, useV2Config)
         require(suite.proot.isFile) { "PRoot launcher is unavailable" }
     }
 
@@ -535,14 +669,14 @@ class LocalRuntimeInstaller(
      * Re-seeds the guest MCP servers (browser + schedule) and agent registrations on runtimes that
      * were installed before the provisioning existed. Idempotent and safe to call on every start.
      */
-    fun provisionGuestCapabilitiesForExistingInstall() {
+    fun provisionGuestCapabilitiesForExistingInstall(useV2Config: Boolean = false) {
         val active = File(runtimeDirectory, "environment")
         listOf(File(active, "rootfs"), File(active, "antigravity-rootfs"))
             .filter(File::isDirectory)
             .forEach { rootfs ->
                 installAndroidHelperScripts(rootfs)
-                provisionBrowserMcp(rootfs)
-                provisionScheduleMcp(rootfs)
+                provisionBrowserMcp(rootfs, useV2Config)
+                provisionScheduleMcp(rootfs, useV2Config)
                 provisionClaudePermissionHook(rootfs)
             }
     }
@@ -561,11 +695,22 @@ class LocalRuntimeInstaller(
      * Registers the guest-browser MCP server with every agent (OpenCode, Claude Code,
      * Antigravity) so they all expose the same browser_* tools. User-added servers are kept.
      */
-    private fun provisionBrowserMcp(rootfs: File) {
+    private fun provisionBrowserMcp(
+        rootfs: File,
+        useV2Config: Boolean = false,
+    ) {
         mergeJsonConfig(File(rootfs, "root/.config/opencode/opencode.json")) { root ->
-            val mcp = root.optJSONObject("mcp") ?: JSONObject()
-            mcp.put(BROWSER_MCP_NAME, browserMcpEntry("opencode"))
-            root.put("mcp", mcp)
+            if (useV2Config) {
+                val mcp = root.optJSONObject("mcp") ?: JSONObject()
+                val servers = mcp.optJSONObject("servers") ?: JSONObject()
+                servers.put(BROWSER_MCP_NAME, browserMcpEntryV2(BROWSER_MCP_BIN, BROWSER_MCP_TIMEOUT_MILLIS))
+                mcp.put("servers", servers)
+                root.put("mcp", mcp)
+            } else {
+                val mcp = root.optJSONObject("mcp") ?: JSONObject()
+                mcp.put(BROWSER_MCP_NAME, browserMcpEntry("opencode"))
+                root.put("mcp", mcp)
+            }
         }
         mergeJsonConfig(File(rootfs, "root/.claude.json")) { root ->
             val servers = root.optJSONObject("mcpServers") ?: JSONObject()
@@ -599,11 +744,22 @@ class LocalRuntimeInstaller(
      * Registers the guest-schedule MCP server with every agent (OpenCode, Claude Code, Antigravity)
      * so they all expose the same schedule_* tools. User-added servers are kept.
      */
-    private fun provisionScheduleMcp(rootfs: File) {
+    private fun provisionScheduleMcp(
+        rootfs: File,
+        useV2Config: Boolean = false,
+    ) {
         mergeJsonConfig(File(rootfs, "root/.config/opencode/opencode.json")) { root ->
-            val mcp = root.optJSONObject("mcp") ?: JSONObject()
-            mcp.put(SCHEDULE_MCP_NAME, scheduleMcpEntry("opencode"))
-            root.put("mcp", mcp)
+            if (useV2Config) {
+                val mcp = root.optJSONObject("mcp") ?: JSONObject()
+                val servers = mcp.optJSONObject("servers") ?: JSONObject()
+                servers.put(SCHEDULE_MCP_NAME, browserMcpEntryV2(SCHEDULE_MCP_BIN, SCHEDULE_MCP_TIMEOUT_MILLIS))
+                mcp.put("servers", servers)
+                root.put("mcp", mcp)
+            } else {
+                val mcp = root.optJSONObject("mcp") ?: JSONObject()
+                mcp.put(SCHEDULE_MCP_NAME, scheduleMcpEntry("opencode"))
+                root.put("mcp", mcp)
+            }
         }
         mergeJsonConfig(File(rootfs, "root/.claude.json")) { root ->
             val servers = root.optJSONObject("mcpServers") ?: JSONObject()
@@ -632,6 +788,25 @@ class LocalRuntimeInstaller(
                     .put("enabled", true)
                     .put("timeout", SCHEDULE_MCP_TIMEOUT_MILLIS)
         }
+
+    /**
+     * OpenCode v2 MCP server entry: servers live under `mcp.servers`, `enabled` becomes the
+     * inverse `disabled`, and the single timeout splits into catalog/execution budgets.
+     */
+    private fun browserMcpEntryV2(
+        bin: String,
+        timeoutMillis: Int,
+    ): JSONObject =
+        JSONObject()
+            .put("type", "local")
+            .put("command", JSONArray(listOf(bin)))
+            .put("disabled", false)
+            .put(
+                "timeout",
+                JSONObject()
+                    .put("catalog", timeoutMillis)
+                    .put("execution", timeoutMillis),
+            )
 
     private fun mergeJsonConfig(
         file: File,
@@ -736,5 +911,46 @@ class LocalRuntimeInstaller(
                 "gcompat",
                 "util-linux",
             )
+    }
+}
+
+/** Random per-install password for the on-device `opencode serve` (v2 servers require auth). */
+internal fun generateServerPassword(): String {
+    val alphabet = ('a'..'z') + ('A'..'Z') + ('0'..'9')
+    val random = SecureRandom()
+    return (1..32).map { alphabet[random.nextInt(alphabet.size)] }.joinToString("")
+}
+
+/**
+ * Checks a portable bundle's embedded manifest against the app's own pins before anything is
+ * extracted from it. Pure so unit tests can drive it without Android.
+ */
+internal fun verifyPortableBundleManifest(
+    bundle: JSONObject,
+    manifest: LocalRuntimeManifest,
+    architecture: LocalRuntimeArchitecture,
+    abi: String,
+) {
+    require(bundle.optInt("schemaVersion") == 1) { "Unsupported portable bundle for $abi" }
+    require(bundle.optString("alpineVersion") == manifest.alpineVersion) {
+        "Portable bundle Alpine version does not match the manifest for $abi"
+    }
+    require(bundle.optString("alpineSha256") == architecture.alpineSha256) {
+        "Portable bundle Alpine digest does not match the manifest for $abi"
+    }
+    require(bundle.optString("openCodeVersion") == manifest.openCodeVersion) {
+        "Portable bundle OpenCode version does not match the manifest for $abi"
+    }
+    require(bundle.optString("openCodeChannel") == manifest.openCodeChannel) {
+        "Portable bundle OpenCode channel does not match the manifest for $abi"
+    }
+    val expectedIntegrity =
+        if (manifest.openCodeChannel == LocalRuntimeManifest.CHANNEL_NPM) {
+            architecture.npmIntegrity
+        } else {
+            architecture.openCodeSha256
+        }
+    require(bundle.optString("openCodeIntegrity") == expectedIntegrity) {
+        "Portable bundle OpenCode integrity does not match the manifest for $abi"
     }
 }

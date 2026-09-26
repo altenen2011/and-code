@@ -53,6 +53,12 @@ interface OpenCodeBackend {
         listSessions().firstOrNull { it.id == sessionId }
             ?: error("Session not found: $sessionId")
 
+    /**
+     * Ids of sessions with live runs, used to restore the running state when a chat is reopened
+     * mid-turn. Backends without run tracking report none.
+     */
+    suspend fun activeSessionIds(): Set<String> = emptySet()
+
     suspend fun createSession(
         title: String? = null,
         directory: String? = null,

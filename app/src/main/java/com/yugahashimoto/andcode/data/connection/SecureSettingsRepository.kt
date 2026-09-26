@@ -161,6 +161,10 @@ class SecureSettingsRepository(context: Context) : RuntimeConnectionStore, Unrea
         get() = preferences.getString(KEY_AGENT_ID, null)
         set(value) = preferences.edit().putString(KEY_AGENT_ID, value).apply()
 
+    var selectedVariant: String?
+        get() = preferences.getString(KEY_VARIANT, null)
+        set(value) = preferences.edit().putString(KEY_VARIANT, value).apply()
+
     var favoriteModelKeys: Set<String>
         get() = preferences.getStringSet(KEY_FAVORITE_MODELS, emptySet()).orEmpty()
         set(value) = preferences.edit().putStringSet(KEY_FAVORITE_MODELS, value).apply()
@@ -559,6 +563,7 @@ class SecureSettingsRepository(context: Context) : RuntimeConnectionStore, Unrea
         private const val KEY_PROVIDER_ID = "provider_id"
         private const val KEY_MODEL_ID = "model_id"
         private const val KEY_AGENT_ID = "agent_id"
+        private const val KEY_VARIANT = "model_variant"
         private const val KEY_FAVORITE_MODELS = "favorite_models"
         private const val KEY_RECENT_MODELS = "recent_models"
         private const val MAX_RECENT_MODELS = 3

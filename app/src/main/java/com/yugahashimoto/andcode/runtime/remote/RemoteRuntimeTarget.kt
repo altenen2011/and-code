@@ -12,6 +12,7 @@ import com.yugahashimoto.andcode.core.api.OpenCodeProject
 import com.yugahashimoto.andcode.core.api.OpenCodeSearchMatch
 import com.yugahashimoto.andcode.core.api.OpenCodeSession
 import com.yugahashimoto.andcode.core.api.OpenCodeTodo
+import com.yugahashimoto.andcode.core.api.OpenCodeV2ApiClient
 import com.yugahashimoto.andcode.core.api.OpenCodeVcsInfo
 import com.yugahashimoto.andcode.core.api.PromptRequest
 import com.yugahashimoto.andcode.core.api.ProviderAuthAuthorization
@@ -21,6 +22,7 @@ import com.yugahashimoto.andcode.core.api.QuestionRequest
 import com.yugahashimoto.andcode.core.util.safeMessage
 import com.yugahashimoto.andcode.data.connection.ConnectionProfile
 import com.yugahashimoto.andcode.runtime.BackendKind
+import com.yugahashimoto.andcode.runtime.OpenCodeBackend
 import com.yugahashimoto.andcode.runtime.PermissionResponse
 import com.yugahashimoto.andcode.runtime.RuntimeCapabilities
 import com.yugahashimoto.andcode.runtime.RuntimeState
@@ -36,20 +38,17 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class RemoteRuntimeTarget(
     val profile: ConnectionProfile,
-    private val backend: RemoteOpenCodeBackend = RemoteOpenCodeBackend(profile),
+    private var backend: OpenCodeBackend = RemoteOpenCodeBackend(profile),
 ) : RuntimeTarget {
     override val id: String = profile.id
     override val displayName: String = profile.name
     override val type: RuntimeType = RuntimeType.REMOTE
     override val kind: BackendKind = BackendKind.REMOTE
-    override val capabilities =
-        RuntimeCapabilities(
-            permissions = true,
-            providerModelList = true,
-            abortsBeforeInterrupt = true,
-            editMessages = true,
-            diffCapable = true,
-        )
+    override val capabilities: RuntimeCapabilities
+        get() = if (useV2) V2_CAPABILITIES else V1_CAPABILITIES
+
+    private var useV2 = false
+    private var versionProbed = false
 
     private val mutableState = MutableStateFlow<RuntimeState>(RuntimeState.Disconnected)
     override val state: StateFlow<RuntimeState> = mutableState.asStateFlow()
@@ -60,6 +59,7 @@ class RemoteRuntimeTarget(
         if (mutableState.value !is RuntimeState.Connected) {
             mutableState.value = RuntimeState.Connecting
         }
+        selectBackendForServerVersion()
         return runCatching { backend.health() }
             .onSuccess { health ->
                 mutableState.value =
@@ -277,4 +277,31 @@ class RemoteRuntimeTarget(
     override suspend fun pendingQuestions(directory: String?): List<QuestionRequest> = backend.pendingQuestions(directory)
 
     override fun events(): Flow<OpenCodeEvent> = backend.events()
+
+    /**
+     * Picks the v1 or v2 backend from the server version. A 2.x `GET /api/info` selects v2;
+     * anything else (404 on v1 servers, network errors) keeps v1. The choice pins on the first
+     * successful probe so reconnects do not flap between stacks.
+     */
+    private suspend fun selectBackendForServerVersion() {
+        if (versionProbed) return
+        val info = runCatching { OpenCodeV2ApiClient(profile).info() }.getOrNull() ?: return
+        versionProbed = true
+        if (info.version.startsWith("2")) {
+            useV2 = true
+            backend = RemoteOpenCodeV2Backend(profile)
+        }
+    }
+
+    companion object {
+        private val V1_CAPABILITIES =
+            RuntimeCapabilities(
+                permissions = true,
+                providerModelList = true,
+                abortsBeforeInterrupt = true,
+                editMessages = true,
+                diffCapable = true,
+            )
+        private val V2_CAPABILITIES = V1_CAPABILITIES.copy(editMessages = false)
+    }
 }

@@ -608,7 +608,11 @@ fun AndCodeApp(
             preferences.modelId?.takeIf { model != null },
             preferences.agentId?.takeIf { id -> settingsState.agents.any { it.name == id } },
             model?.limit?.context ?: 0L,
+            preferences.variant,
         )
+        // selectConfiguration drops the effort when the model changed; keep the stored value in
+        // sync so a stale variant never resurfaces on the next start.
+        settingsViewModel.selectVariant(chatViewModel.uiState.value.selectedVariant)
     }
 
     // What the composer falls back to before the chat has a selection of its own.
@@ -1122,7 +1126,10 @@ fun AndCodeApp(
                             onSelectModel = settingsViewModel::selectModel,
                             onSelectAgent = settingsViewModel::selectAgent,
                             selectedVariant = chatState.selectedVariant,
-                            onSelectVariant = chatViewModel::selectVariant,
+                            onSelectVariant = { variant ->
+                                settingsViewModel.selectVariant(variant)
+                                chatViewModel.selectVariant(variant)
+                            },
                             onAttach = { attachmentLauncher.launch("*/*") },
                             onRemoveAttachment = chatViewModel::removeAttachment,
                             onImageAttachment = { bitmap ->

@@ -1,5 +1,6 @@
 package com.yugahashimoto.andcode.runtime.local
 
+import com.yugahashimoto.andcode.runtime.OpenCodeBackend
 import com.yugahashimoto.andcode.runtime.remote.RemoteOpenCodeBackend
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -24,7 +25,7 @@ class LocalOpenCodeBackendConcurrencyTest {
         val threads = 10
         val latch = CountDownLatch(threads)
         val executor = Executors.newFixedThreadPool(threads)
-        val results = java.util.concurrent.ConcurrentHashMap.newKeySet<RemoteOpenCodeBackend>()
+        val results = java.util.concurrent.ConcurrentHashMap.newKeySet<OpenCodeBackend>()
 
         repeat(threads) {
             executor.submit {

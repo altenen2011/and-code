@@ -93,7 +93,14 @@ class LocalRuntimeProcessLauncher(
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
         builder.environment().apply {
             clear()
-            putAll(localRuntimeEnvironment(suite.environment(), prootTmp, githubToken()))
+            putAll(
+                localRuntimeEnvironment(
+                    suite.environment(),
+                    prootTmp,
+                    githubToken(),
+                    runtime.metadata.serverPassword.takeIf { it.isNotBlank() },
+                ),
+            )
         }
         val started = builder.start()
         process = started
@@ -327,6 +334,7 @@ internal fun localRuntimeEnvironment(
     suiteEnvironment: Map<String, String>,
     prootTmp: File,
     githubToken: String? = null,
+    serverPassword: String? = null,
 ): Map<String, String> =
     buildMap {
         putAll(suiteEnvironment)
@@ -349,6 +357,9 @@ internal fun localRuntimeEnvironment(
         githubToken?.takeIf(String::isNotBlank)?.let {
             put("OPENCODE_GITHUB_TOKEN", it)
             put("GH_TOKEN", it)
+        }
+        serverPassword?.takeIf(String::isNotBlank)?.let {
+            put("OPENCODE_SERVER_PASSWORD", it)
         }
     }
 
