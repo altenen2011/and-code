@@ -49,6 +49,20 @@ data class V2ModelRef(
 }
 
 @Serializable
+data class V2SessionTokens(
+    val input: Long = 0L,
+    val output: Long = 0L,
+    val reasoning: Long = 0L,
+    val cache: V2SessionCacheTokens? = null,
+)
+
+@Serializable
+data class V2SessionCacheTokens(
+    val read: Long = 0L,
+    val write: Long = 0L,
+)
+
+@Serializable
 data class V2Session(
     val id: String = "",
     val title: String = "",
@@ -56,6 +70,7 @@ data class V2Session(
     val model: V2ModelRef? = null,
     @SerialName("projectID") val projectId: String? = null,
     val time: V2SessionTime = V2SessionTime(),
+    val tokens: V2SessionTokens? = null,
 ) {
     val isArchived: Boolean
         get() = time.archived != null

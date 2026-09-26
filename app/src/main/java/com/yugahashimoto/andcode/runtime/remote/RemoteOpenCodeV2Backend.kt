@@ -169,7 +169,7 @@ class RemoteOpenCodeV2Backend(
     override suspend fun listFiles(
         directory: String,
         path: String,
-    ): List<OpenCodeFileNode> = client.fsEntries(directory, path).map { it.toFileNode() }
+    ): List<OpenCodeFileNode> = client.fsEntries(directory, path).map { it.toFileNode(directory) }
 
     override suspend fun readFile(
         directory: String,

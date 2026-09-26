@@ -258,6 +258,8 @@ class SettingsViewModel(
 
     fun selectAgent(agentId: String) = preferences.selectAgent(agentId)
 
+    fun selectVariant(variant: String?) = preferences.selectVariant(variant)
+
     fun setTtsEnabled(enabled: Boolean) = preferences.setTtsEnabled(enabled)
 
     fun setTtsProvider(provider: String) = preferences.setTtsProvider(provider)

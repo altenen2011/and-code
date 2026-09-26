@@ -29,10 +29,22 @@ class OpenCodeV2TranslationTest {
     }
 
     @Test
+    fun `maps session token usage for the context bar`() {
+        val session =
+            V2Session(
+                id = "ses_1",
+                tokens = V2SessionTokens(input = 100L, output = 20L, cache = V2SessionCacheTokens(read = 30L)),
+            ).toSession()
+
+        assertEquals(130L, session.tokens?.contextUsed)
+    }
+
+    @Test
     fun `maps user and assistant messages and folds other kinds`() {
         val user = v2MessageFromJson(messageJson("msg_1", "user", "hi")).toMessage()
         assertEquals("user", user.info.role)
         assertEquals("hi", user.text)
+        assertEquals("msg_1-p0", user.parts.single().id)
 
         val system = v2MessageFromJson(messageJson("msg_2", "system", "note")).toMessage()
         assertEquals("assistant", system.info.role)
@@ -104,9 +116,13 @@ class OpenCodeV2TranslationTest {
 
     @Test
     fun `maps workspace browsing models`() {
-        val node = V2FileEntry(path = "src/Main.kt", type = "file").toFileNode()
+        val node = V2FileEntry(path = "src/Main.kt", type = "file").toFileNode("/ws")
         assertEquals("Main.kt", node.name)
         assertEquals("src/Main.kt", node.path)
+        assertEquals("/ws/src/Main.kt", node.absolute)
+
+        val dir = V2FileEntry(path = "src/", type = "directory").toFileNode("/ws")
+        assertEquals("src", dir.name)
 
         val content = v2FileContent("a.kt", "hello")
         assertEquals("hello", content.content)

@@ -55,7 +55,7 @@ class OpenCodeV2ApiClient(
 
     suspend fun projects(): List<V2Project> = getDirectList("api/project")
 
-    suspend fun locationInfo(location: String? = null): V2LocationInfo = getData("api/location", query("location" to location))
+    suspend fun locationInfo(location: String? = null): V2LocationInfo = getData("api/location", query("location[directory]" to location))
 
     suspend fun session(sessionId: String): V2Session = getDataOrDirect("api/session/${encodePath(sessionId)}")
 
@@ -196,7 +196,7 @@ class OpenCodeV2ApiClient(
     suspend fun fsEntries(
         location: String,
         path: String,
-    ): List<V2FileEntry> = getDataList("api/fs/list", query("location" to location, "path" to path))
+    ): List<V2FileEntry> = getDataList("api/fs/list", query("location[directory]" to location, "path" to path))
 
     /** Raw bytes as text; the file browser only opens text, binary misuse is on the caller. */
     suspend fun fsRead(
@@ -207,7 +207,7 @@ class OpenCodeV2ApiClient(
             val request =
                 requestBuilder(
                     "api/fs/read/${path.replace("?", "%3F").replace("#", "%23")}",
-                    query("location" to location),
+                    query("location[directory]" to location),
                 ).get().build()
             execute(request) { body -> body }
         }
@@ -219,12 +219,12 @@ class OpenCodeV2ApiClient(
     ): List<V2FileEntry> =
         getDataList(
             "api/fs/find",
-            query("location" to location, "query" to queryText, "limit" to limit?.toString()),
+            query("location[directory]" to location, "query" to queryText, "limit" to limit?.toString()),
         )
 
-    suspend fun vcsInfo(location: String): V2VcsInfo = getData("api/vcs", query("location" to location))
+    suspend fun vcsInfo(location: String): V2VcsInfo = getData("api/vcs", query("location[directory]" to location))
 
-    suspend fun vcsStatus(location: String): List<V2FileStatus> = getDataList("api/vcs/status", query("location" to location))
+    suspend fun vcsStatus(location: String): List<V2FileStatus> = getDataList("api/vcs/status", query("location[directory]" to location))
 
     suspend fun vcsDiff(
         location: String,
@@ -233,7 +233,7 @@ class OpenCodeV2ApiClient(
     ): List<V2FileDiff> =
         getDataList(
             "api/vcs/diff",
-            query("location" to location, "mode" to mode, "context" to context?.toString()),
+            query("location[directory]" to location, "mode" to mode, "context" to context?.toString()),
         )
 
     suspend fun sessionDiff(sessionId: String): List<V2FileDiff> = getDataList("api/session/${encodePath(sessionId)}/diff")

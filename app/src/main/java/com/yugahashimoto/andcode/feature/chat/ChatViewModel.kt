@@ -233,6 +233,7 @@ private const val TRANSIENT_RECOVERY_MAX_BACKOFF_MS = 30_000L
 private const val TRANSIENT_RECOVERY_MAX_ATTEMPTS = 20
 private const val HEALTH_CHECK_ATTEMPTS = 15
 private const val HEALTH_CHECK_DELAY_MS = 2000L
+private const val IDLE_REFETCH_DELAY_MS = 1500L
 private const val PENDING_QUESTION_REFRESH_ATTEMPTS = 3
 private const val PENDING_QUESTION_REFRESH_RETRY_DELAY_MS = 3000L
 
@@ -832,6 +833,7 @@ class ChatViewModel(
         modelId: String?,
         agentId: String?,
         contextLimit: Long = 0L,
+        variant: String? = null,
     ) {
         this.contextLimit = contextLimit
         _uiState.update {
@@ -845,7 +847,7 @@ class ChatViewModel(
                 // model never listed - AntigravityModels.cliArgs in particular reads a leftover
                 // variant straight off whatever provider set it last, for any model whose id has no
                 // effort baked in.
-                selectedVariant = if (modelChanged) null else it.selectedVariant,
+                selectedVariant = if (modelChanged) null else variant ?: it.selectedVariant,
             )
         }
     }
@@ -976,6 +978,7 @@ class ChatViewModel(
                 permissions = emptyList(),
                 pendingQuestions = emptyList(),
                 sessionDirectory = null,
+                contextTokensUsed = 0L,
                 isRunning = if (switchingSession) false else it.isRunning,
                 isThinking = if (switchingSession) false else it.isThinking,
                 dismissedTodoBarId = null,
@@ -1105,6 +1108,7 @@ class ChatViewModel(
                 permissions = emptyList(),
                 pendingQuestions = emptyList(),
                 sessionDirectory = null,
+                contextTokensUsed = 0L,
                 isRunning = false,
                 isThinking = false,
                 isListening = false,
@@ -2354,8 +2358,26 @@ class ChatViewModel(
         }
         refreshContextUsage(sessionId)
         refreshMessages(sessionId, retainedIds)
+        scheduleIdleRefetch(sessionId)
         onSessionCreated()
         drainQueue()
+    }
+
+    /**
+     * The idle event can win the race against the server persisting the finished turn: the first
+     * refresh then reloads the pre-turn transcript and the reply only appears on the next manual
+     * reload (re-enter, chat switch). One guarded second pass shortly after closes that window —
+     * it runs only if the user is still looking at the same idle chat.
+     */
+    private fun scheduleIdleRefetch(sessionId: String) {
+        val generation = _uiState.value.chatGeneration
+        viewModelScope.launch {
+            delay(IDLE_REFETCH_DELAY_MS)
+            if (_uiState.value.sessionId != sessionId || _uiState.value.chatGeneration != generation) return@launch
+            if (_uiState.value.isRunning) return@launch
+            refreshMessages(sessionId)
+            refreshContextUsage(sessionId)
+        }
     }
 
     private fun refreshMessages(

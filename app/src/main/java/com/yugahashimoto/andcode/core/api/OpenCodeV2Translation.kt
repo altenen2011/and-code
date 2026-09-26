@@ -29,6 +29,15 @@ fun V2Session.toSession(): OpenCodeSession =
                 updated = v2TimestampToMillis(time.updated),
                 archived = time.archived?.let(::v2TimestampToMillis),
             ),
+        tokens =
+            tokens?.let {
+                OpenCodeSessionTokens(
+                    input = it.input,
+                    output = it.output,
+                    reasoning = it.reasoning,
+                    cache = it.cache?.let { cache -> OpenCodeCacheTokens(read = cache.read, write = cache.write) },
+                )
+            },
     )
 
 fun V2ModelRef.toModelReference(): OpenCodeModelReference = OpenCodeModelReference(providerId = providerId, modelId = id)
@@ -49,9 +58,12 @@ fun V2Message.toMessage(): OpenCodeMessage {
             role = role,
         )
     val parts =
+        // Parts need stable ids: the chat drops id-less parts on reload, which hid entire
+        // responses after a refresh.
         if (text.isNotBlank()) {
             listOf(
                 OpenCodePart(
+                    id = "$messageId-p0",
                     type = "text",
                     text = text,
                     messageId = messageId,
@@ -170,13 +182,25 @@ fun V2LocationProject.toProject(): OpenCodeProject =
         name = canonical,
     )
 
-fun V2FileEntry.toFileNode(): OpenCodeFileNode =
-    OpenCodeFileNode(
-        name = path.substringAfterLast('/').ifBlank { path },
+/**
+ * V2 entry paths are relative to the listed location (directories carry a trailing slash), so
+ * the absolute path is rebuilt from [location] for navigation and file reads.
+ */
+fun V2FileEntry.toFileNode(location: String): OpenCodeFileNode {
+    val relative = path.trimEnd('/')
+    val absolute =
+        when {
+            relative.isBlank() -> location
+            location.isBlank() -> relative
+            else -> location.trimEnd('/') + "/" + relative
+        }
+    return OpenCodeFileNode(
+        name = relative.substringAfterLast('/').ifBlank { relative },
         path = path,
-        absolute = path,
+        absolute = absolute,
         type = type,
     )
+}
 
 fun v2FileContent(
     path: String,
