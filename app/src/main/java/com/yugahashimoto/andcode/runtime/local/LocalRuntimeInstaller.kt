@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.security.SecureRandom
 
 class LocalRuntimeInstaller(
