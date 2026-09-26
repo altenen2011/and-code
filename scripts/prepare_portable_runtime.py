@@ -238,14 +238,32 @@ def portable_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
 
 
 def extract_apk_data(apk_bytes: bytes, rootfs: Path) -> None:
-    """Layer an .apk's data.tar.gz into rootfs (no triggers; those run on device)."""
+    """Layer an .apk into rootfs (no triggers; those run on device).
+
+    Old-format packages nest a data.tar.gz payload; current ones store files inline next to
+    .PKGINFO/.SIGN metadata. Fully file-less entries are metapackages: nothing to layer.
+    """
     with tarfile.open(fileobj=io.BytesIO(apk_bytes), mode="r:gz") as outer:
-        data_member = next((m for m in outer.getmembers() if m.name == "data.tar.gz"), None)
-        if data_member is None:
-            raise RuntimeError("APK has no data.tar.gz")
-        data_bytes = outer.extractfile(data_member).read()
-    with tarfile.open(fileobj=io.BytesIO(data_bytes), mode="r:gz") as data:
-        data.extractall(path=rootfs, filter=portable_filter)
+        members = outer.getmembers()
+        nested = next((m for m in members if m.name == "data.tar.gz"), None)
+        if nested is not None:
+            data_bytes = outer.extractfile(nested).read()
+            with tarfile.open(fileobj=io.BytesIO(data_bytes), mode="r:gz") as data:
+                for member in data.getmembers():
+                    _extract_member(data, member, rootfs)
+            return
+        payload = [m for m in members if not m.name.startswith(".PKGINFO") and ".SIGN." not in m.name]
+        for member in payload:
+            _extract_member(outer, member, rootfs)
+
+
+def _extract_member(tar: tarfile.TarFile, member: tarfile.TarInfo, rootfs: Path) -> None:
+    # Mirrors portable_filter + data_filter safeguards for a single member.
+    if member.issym() or member.islnk():
+        if os.path.isabs(member.linkname):
+            member.linkname = member.linkname.lstrip("/")
+    filtered = tarfile.data_filter(member, str(rootfs))
+    tar.extract(filtered, path=rootfs, filter="data")
 
 
 def extract_member(tarball: bytes, member_name: str) -> bytes:
