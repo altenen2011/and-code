@@ -113,7 +113,7 @@ class NpmOpenCodeReleaseClient(
     private fun getDocument(path: String): NpmVersionDocument {
         val url =
             registry.newBuilder()
-                ?.addPathSegments(path)
+                ?.addEncodedPathSegments(path)
                 ?.build()
                 ?: error("Invalid npm registry path: $path")
         val request =
