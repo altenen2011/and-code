@@ -85,7 +85,12 @@ class NpmOpenCodeReleaseClient(
         val normalized = normalizeRuntimeVersion(version)
         val doc = getDocument("${packageName.replace("/", "%2F")}/$normalized")
         val tarball = doc.dist?.tarball.orEmpty()
-        require(tarball.startsWith("https://")) { "npm tarball URL must use HTTPS" }
+        val tarballUrl =
+            runCatching { tarball.toHttpUrl() }.getOrNull()
+                ?: error("npm tarball URL is invalid")
+        require(tarballUrl.isHttps || tarballUrl.host in LOOPBACK_HOSTS) {
+            "npm tarball URL must use HTTPS"
+        }
         val integrity = doc.dist?.integrity.orEmpty()
         require(INTEGRITY.matches(integrity)) {
             "npm package $packageName@$normalized is missing a valid integrity hash"

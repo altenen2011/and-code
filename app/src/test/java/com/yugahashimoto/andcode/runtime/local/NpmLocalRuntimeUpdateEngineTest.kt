@@ -74,16 +74,11 @@ class NpmLocalRuntimeUpdateEngineTest {
     @Test
     fun `tarball size falls back to content length`() =
         runBlocking {
-            server.enqueue(
-                MockResponse()
-                    .setResponseCode(200)
-                    .setHeader("Content-Length", "12345")
-                    .setBody("x"),
-            )
+            server.enqueue(MockResponse().setResponseCode(200).setBody("y".repeat(50)))
 
             val client = NpmOpenCodeReleaseClient(registry = server.url("/").toString().toHttpUrl())
 
-            assertEquals(12345L, client.tarballSizeBytes(server.url("/pkg.tgz").toString()))
+            assertEquals(50L, client.tarballSizeBytes(server.url("/pkg.tgz").toString()))
         }
 
     @Test
