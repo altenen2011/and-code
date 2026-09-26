@@ -15,11 +15,13 @@ import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.serializer
 import okhttp3.Credentials
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -80,7 +82,7 @@ class OpenCodeV2ApiClient(
             execute(requestBuilder("api/session/${encodePath(sessionId)}/message").get().build()) { body ->
                 val root = json.parseToJsonElement(body).jsonObject
                 val data = requireNotNull(root["data"]) { "v2 messages response is missing data" }
-                json.decodeFromJsonElement<List<JsonObject>>(data).map(::v2MessageFromJson)
+                json.decodeFromJsonElement(ListSerializer(JsonObject.serializer()), data).map(::v2MessageFromJson)
             }
         }
 
@@ -219,7 +221,7 @@ class OpenCodeV2ApiClient(
             execute(requestBuilder(path, queryParameters).get().build()) { body ->
                 val root = json.parseToJsonElement(body).jsonObject
                 val data = requireNotNull(root["data"]) { "v2 response is missing data ($path)" }
-                json.decodeFromJsonElement<List<T>>(data)
+                json.decodeFromJsonElement(ListSerializer(serializer()), data)
             }
         }
 
@@ -295,7 +297,7 @@ class OpenCodeV2ApiClient(
             } else {
                 element
             }
-        return json.decodeFromJsonElement<T>(payload)
+        return json.decodeFromJsonElement(serializer(), payload)
     }
 
     private fun <T> execute(
