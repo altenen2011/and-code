@@ -194,6 +194,13 @@ android {
             // android.util.Log is a stub on the unit test classpath and throws on every call.
             // Returning defaults instead lets tests exercise code that logs on its error paths.
             isReturnDefaultValues = true
+            all {
+                testLogging {
+                    showExceptions = true
+                    showStackTraces = true
+                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                }
+            }
         }
     }
     lint {
