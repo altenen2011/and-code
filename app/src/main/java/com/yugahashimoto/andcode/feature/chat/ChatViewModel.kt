@@ -2358,7 +2358,7 @@ class ChatViewModel(
         }
         refreshContextUsage(sessionId)
         refreshMessages(sessionId, retainedIds)
-        scheduleIdleRefetch(sessionId)
+        scheduleIdleRefetch(sessionId, retainedIds)
         onSessionCreated()
         drainQueue()
     }
@@ -2367,15 +2367,19 @@ class ChatViewModel(
      * The idle event can win the race against the server persisting the finished turn: the first
      * refresh then reloads the pre-turn transcript and the reply only appears on the next manual
      * reload (re-enter, chat switch). One guarded second pass shortly after closes that window —
-     * it runs only if the user is still looking at the same idle chat.
+     * it runs only if the user is still looking at the same idle chat, and it retains the same
+     * streamed ids so an unpersisted partial is not wiped by the extra pass.
      */
-    private fun scheduleIdleRefetch(sessionId: String) {
+    private fun scheduleIdleRefetch(
+        sessionId: String,
+        retainedIds: Set<String>,
+    ) {
         val generation = _uiState.value.chatGeneration
         viewModelScope.launch {
             delay(IDLE_REFETCH_DELAY_MS)
             if (_uiState.value.sessionId != sessionId || _uiState.value.chatGeneration != generation) return@launch
             if (_uiState.value.isRunning) return@launch
-            refreshMessages(sessionId)
+            refreshMessages(sessionId, retainedIds)
             refreshContextUsage(sessionId)
         }
     }
