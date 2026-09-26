@@ -33,10 +33,11 @@ class NpmLocalRuntimeUpdateEngineTest {
     @Test
     fun `check maps npm releases to updater releases with integrity`() =
         runBlocking {
+            val tarballUrl = server.url("/cli-linux-arm64-musl-2.0.18.tgz").toString()
             server.enqueue(MockResponse().setBody("""{"version":"2.0.18"}"""))
             server.enqueue(
                 MockResponse().setBody(
-                    """{"version":"2.0.18","dist":{"tarball":"https://registry.npmjs.org/pkg.tgz","integrity":"sha512-${"A".repeat(
+                    """{"version":"2.0.18","dist":{"tarball":"$tarballUrl","integrity":"sha512-${"A".repeat(
                         86,
                     )}=="}}""",
                 ),
@@ -82,7 +83,7 @@ class NpmLocalRuntimeUpdateEngineTest {
 
             val client = NpmOpenCodeReleaseClient(registry = server.url("/").toString().toHttpUrl())
 
-            assertEquals(12345L, client.tarballSizeBytes("https://registry.npmjs.org/pkg.tgz"))
+            assertEquals(12345L, client.tarballSizeBytes(server.url("/pkg.tgz").toString()))
         }
 
     @Test
