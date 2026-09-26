@@ -204,13 +204,13 @@ class RemoteOpenCodeV2BackendTest {
             val status = backend.vcsStatus("/ws")
 
             assertEquals("prj_1", projects[0].id)
-            assertEquals("/api/project", server.takePath(), "projects request")
+            assertEquals("projects request", "/api/project", server.takePath())
             assertEquals("Main.kt", files[0].name)
-            assertEquals("/api/fs/list", server.takePath(), "fs list request")
+            assertEquals("fs list request", "/api/fs/list", server.takePath())
             assertEquals("main", vcs.branch)
-            assertEquals("/api/vcs", server.takePath(), "vcs request")
+            assertEquals("vcs request", "/api/vcs", server.takePath())
             assertEquals("a.kt", status[0].file)
-            assertEquals("/api/vcs/status", server.takePath(), "vcs status request")
+            assertEquals("vcs status request", "/api/vcs/status", server.takePath())
         }
 
     @Test
@@ -226,9 +226,9 @@ class RemoteOpenCodeV2BackendTest {
             val ok = backend.answerQuestion("frm_1", listOf(listOf("yes")), null)
 
             assertTrue("answer should succeed", ok)
-            assertEquals("/api/form", server.takePath(), "pending forms request")
+            assertEquals("pending forms request", "/api/form", server.takePath())
             val reply = server.takeRequest()
-            assertEquals("/api/session/ses_1/form/frm_1/reply", reply.path, "form reply request")
+            assertEquals("form reply request", "/api/session/ses_1/form/frm_1/reply", reply.path)
             assertTrue("reply carries field key", reply.body.readUtf8().contains("choice"))
             assertTrue("reply carries answer", reply.body.readUtf8().contains("yes"))
         }
