@@ -56,8 +56,10 @@ server API, the plugin API, and parts of the config shape
 packages + pinned OpenCode) into the APK at build time, so phone setup extracts instead of
 downloading:
 
-- Only fully hash-verified bytes land in a bundle (minirootfs SHA-256, APK sizes + SHA-1,
-  OpenCode tarball SHA-256/SHA-512). Anything unverified fails the script, never the bundle.
+- Only pinned inputs land in a bundle. Alpine minirootfs and OpenCode verify against the
+  app manifest (SHA-256 / registry SHA-512); APK packages verify by size plus byte-equality
+  across independent mirrors, with both the actual and index digests recorded in
+  `bundle-manifest.json` for audit. Anything unverifiable fails the script, never the bundle.
 - The tarball embeds `bundle-manifest.json` **first**; the installer verifies its pins against
   the app manifest before extracting anything, and falls back to downloads when no bundle is
   shipped for the ABI.

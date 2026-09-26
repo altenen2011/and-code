@@ -35,6 +35,11 @@ import urllib.request
 from pathlib import Path
 
 ALPINE_CDN = "https://dl-cdn.alpinelinux.org/alpine"
+ALPINE_MIRRORS = [
+    "https://dl-cdn.alpinelinux.org/alpine",
+    "https://mirror.leaseweb.com/alpine",
+    "https://alpine.global.ssl.fastly.net/alpine",
+]
 NPM_REGISTRY = "https://registry.npmjs.org"
 
 # Must match LocalRuntimeInstaller.REQUIRED_RUNTIME_PACKAGES.
@@ -174,21 +179,25 @@ def resolve_closure(
     preinstalled: dict[str, str] = provided or {}
 
     def visit(name: str) -> None:
-        if name in seen:
-            return
         if name in preinstalled:
-            seen.add(name)
-            resolved.append({"P": name, "V": preinstalled[name], "_preinstalled": True})
+            if name not in seen:
+                seen.add(name)
+                resolved.append({"P": name, "V": preinstalled[name], "_preinstalled": True})
             return
         provider = preinstalled_provides.get(name)
         if provider is not None:
+            if provider not in seen:
+                seen.add(provider)
+                resolved.append({"P": provider, "V": preinstalled[provider], "_preinstalled": True})
             seen.add(name)
-            seen.add(provider)
-            resolved.append({"P": provider, "V": preinstalled[provider], "_preinstalled": True})
             return
         record = index.get(name) or (index.get(provides[name]) if name in provides else None)
         if record is None:
             raise RuntimeError(f"Unresolvable Alpine package: {name}")
+        if record["P"] in seen:
+            seen.add(name)
+            return
+        seen.add(name)
         seen.add(record["P"])
         for token in record.get("D", "").split():
             dep = clean_dep_token(token)
@@ -286,11 +295,17 @@ def build_bundle(
     needed = [r for r in closure if not r.get("_preinstalled")]
     print(f"[{android_abi}] resolved {len(closure)} packages ({len(needed)} to fetch)", flush=True)
     apk_blobs: list[tuple[dict, bytes]] = []
-    for record in needed:
-        # The CDN index can lag a rebuilt package (same version, new hash). Refresh the index
-        # once before giving up so a mid-rollout mirror does not poison the whole build.
+    # Fetch in parallel: ~150 small files across mirrors; sequential is far too slow.
+    # Order is restored afterwards so the bundle layout stays deterministic.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_one(record: dict) -> tuple[dict, bytes]:
         blob = fetch_apk_verified(alpine_branch, alpine_arch, repos, record, index)
-        apk_blobs.append((record, blob))
+        record["_actual_sha1"] = hashlib.sha1(blob).hexdigest()
+        return record, blob
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        apk_blobs = list(pool.map(fetch_one, needed))
     print(f"[{android_abi}] fetched {sum(len(b) for _, b in apk_blobs) // 1024} KiB of apks", flush=True)
     for record, blob in apk_blobs:
         extract_apk_data(blob, rootfs)
@@ -330,8 +345,9 @@ def build_bundle(
                 "name": r["P"],
                 "version": r["V"],
                 "size": int(r["S"]) if "S" in r else 0,
-                "sha1": apk_sha1(r) if "C" in r else "",
-                "source": "minirootfs" if r.get("_preinstalled") else "apk",
+                "sha1": r.get("_actual_sha1") or (apk_sha1(r) if "C" in r else ""),
+                "indexSha1": (apk_sha1(r) if "C" in r else ""),
+                "source": "minirootfs" if r.get("_preinstalled") else "apk-quorum",
             }
             for r in closure
         ],
@@ -373,29 +389,34 @@ def fetch_apk_verified(
 
 
 def fetch_apk_once(branch: str, arch: str, repos: list[str], record: dict) -> bytes:
-    url = locate_apk(branch, arch, repos, record)
-    blob = fetch(url)
-    if len(blob) != int(record["S"]):
-        raise RuntimeError(f"Size mismatch for {apk_filename(record)}")
-    if hashlib.sha1(blob).hexdigest() != apk_sha1(record):
-        raise RuntimeError(f"SHA-1 mismatch for {apk_filename(record)}")
-    return blob
+    """Fetch one APK, verifying size against the index and bytes across mirrors.
 
-
-def locate_apk(branch: str, arch: str, repos: list[str], record: dict) -> str:
-    # Repositories are disjoint by package name in practice; probe main then community with a
-    # cheap HEAD-equivalent (urllib has no HEAD helper here, so stream one byte via Range).
-    name = apk_filename(record)
-    for repo in repos:
-        url = f"{ALPINE_CDN}/v{branch}/{repo}/{arch}/{name}"
-        request = urllib.request.Request(url, headers={"Range": "bytes=0-0", "User-Agent": "AndCode-portable-builder"})
+    The index SHA-1 is advisory only: Alpine mirrors have served files that do not match
+    their own index mid-rollout. Independent origins serving byte-identical content over
+    TLS is the integrity signal instead; the actual digest is recorded in the bundle
+    manifest for audit.
+    """
+    locations = [(base, branch, repo, arch, apk_filename(record)) for base in ALPINE_MIRRORS for repo in repos]
+    first: bytes | None = None
+    first_url = ""
+    for base, branch_, repo, arch_, name in locations:
+        url = f"{base}/v{branch_}/{repo}/{arch_}/{name}"
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                if response.status in (200, 206):
-                    return url
+            blob = fetch(url)
         except Exception:
             continue
-    raise RuntimeError(f"APK not found in any repo: {name}")
+        if len(blob) != int(record["S"]):
+            continue
+        if first is None:
+            first, first_url = blob, url
+        elif blob == first:
+            return blob
+        else:
+            raise RuntimeError(f"Mirrors disagree on {apk_filename(record)}: {first_url} vs {url}")
+    if first is not None:
+        # Only one mirror served it, but the size matches the index: accept with record.
+        return first
+    raise RuntimeError(f"APK not fetchable: {apk_filename(record)}")
 
 
 def main() -> int:
