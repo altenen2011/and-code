@@ -41,7 +41,11 @@ import kotlinx.coroutines.launch
 
 class LocalRuntimeTarget(
     private val runtimeManager: LocalRuntimeManager,
-    private val backend: LocalOpenCodeBackend = LocalOpenCodeBackend(runtimeManager),
+    private val backend: LocalOpenCodeBackend =
+        LocalOpenCodeBackend(
+            runtimeManager = runtimeManager,
+            useV2 = { isV2Runtime() },
+        ),
     private val messages: LocalRuntimeMessages = LocalRuntimeMessages,
 ) : RuntimeTarget {
     override val id: String = LocalAgent.OPEN_CODE.targetId
@@ -49,14 +53,10 @@ class LocalRuntimeTarget(
     override val agent: LocalAgent = LocalAgent.OPEN_CODE
     override val type: RuntimeType = RuntimeType.LOCAL
     override val kind: BackendKind = BackendKind.LOCAL
-    override val capabilities =
-        RuntimeCapabilities(
-            permissions = true,
-            providerModelList = true,
-            abortsBeforeInterrupt = true,
-            editMessages = true,
-            diffCapable = true,
-        )
+    override val capabilities: RuntimeCapabilities
+        get() = if (isV2Runtime()) V2_CAPABILITIES else V1_CAPABILITIES
+
+    private fun isV2Runtime(): Boolean = (runtimeManager.status() as? LocalRuntimeStatus.Ready)?.version?.startsWith("2") == true
 
     private val mutableState = MutableStateFlow(mapStatus(runtimeManager.status()))
     override val state: StateFlow<RuntimeState> = mutableState.asStateFlow()
@@ -333,4 +333,16 @@ class LocalRuntimeTarget(
             is RuntimeState.Unavailable -> reason
             is RuntimeState.Failed -> message
         }
+
+    companion object {
+        private val V1_CAPABILITIES =
+            RuntimeCapabilities(
+                permissions = true,
+                providerModelList = true,
+                abortsBeforeInterrupt = true,
+                editMessages = true,
+                diffCapable = true,
+            )
+        private val V2_CAPABILITIES = V1_CAPABILITIES.copy(editMessages = false)
+    }
 }
